@@ -2,16 +2,22 @@
 
 # =========================================================
 # FAST LUCIFER DONGHUA DOWNLOADER BOT
+# QUEUE + CHANNEL UPLOAD + FLOODWAIT SAFE
 # =========================================================
 
 import os
 import re
 import math
 import time
+import signal
 import asyncio
 import subprocess
 
+from collections import deque
+
 from pyrogram import Client, filters
+from pyrogram.errors import FloodWait
+
 from playwright.async_api import async_playwright
 
 # =========================================================
@@ -20,7 +26,7 @@ from playwright.async_api import async_playwright
 
 API_ID = 
 API_HASH = "32d454f51fc7b3b3c7d51c4f80f628b5"
-BOT_TOKEN = ""
+BOT_TOKEN = "YOUR_BOT_TOKEN"
 
 OWNER_ID = [1685470205]
 
@@ -40,7 +46,19 @@ app = Client(
     workers=50
 )
 
+# =========================================================
+# GLOBALS
+# =========================================================
+
 USER_MODE = {}
+
+QUEUE = deque()
+
+PROCESSING = False
+
+UPLOAD_CHANNEL = None
+
+LAST_STATUS = {}
 
 # =========================================================
 # UTIL
@@ -49,12 +67,23 @@ USER_MODE = {}
 def clean_name(name):
 
     remove_words = [
+
         " - Lucifer Donghua.in - ChineseDonghua Anime Stream",
+        "- Lucifer Donghua.in - ChineseDonghua Anime Stream",
+
+        "Lucifer Donghua.in - ChineseDonghua Anime Stream",
+
+        "ChineseDonghua Anime Stream",
+
         "Lucifer Donghua.in",
-        "ChineseDonghua Anime Stream"
+
+        "- ChineseDonghua Anime Stream",
+
+        " - ChineseDonghua Anime Stream"
     ]
 
     for w in remove_words:
+
         name = name.replace(w, "")
 
     name = re.sub(r'[\\/:*?"<>|]', '', name)
@@ -65,7 +94,24 @@ def clean_name(name):
 
 def run(cmd):
 
-    subprocess.run(cmd, shell=True)
+    process = subprocess.Popen(
+        cmd,
+        shell=True,
+        preexec_fn=os.setsid
+    )
+
+    try:
+
+        process.wait(timeout=1800)
+
+    except subprocess.TimeoutExpired:
+
+        os.killpg(
+            os.getpgid(process.pid),
+            signal.SIGTERM
+        )
+
+        print("PROCESS KILLED")
 
 def get_duration(file):
 
@@ -84,18 +130,33 @@ ffprobe -v error \
     return float(out)
 
 # =========================================================
-# TG STATUS
+# SAFE EDIT
 # =========================================================
 
-async def update_status(msg, text):
+async def safe_edit(msg, text):
 
     try:
+
+        old = LAST_STATUS.get(msg.id)
+
+        if old == text:
+            return
+
+        LAST_STATUS[msg.id] = text
+
         await msg.edit(text)
+
+        await asyncio.sleep(15)
+
+    except FloodWait as e:
+
+        await asyncio.sleep(e.value)
+
     except:
         pass
 
 # =========================================================
-# EXTRACT VIDEO
+# DOWNLOAD
 # =========================================================
 
 async def extract_video(post_url, msg):
@@ -104,13 +165,10 @@ async def extract_video(post_url, msg):
 
         browser = await p.chromium.launch(
             headless=True,
-            channel="chrome",
             args=[
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-infobars",
-                "--start-maximized"
+                "--disable-dev-shm-usage"
             ]
         )
 
@@ -119,52 +177,31 @@ async def extract_video(post_url, msg):
                 "width": 1366,
                 "height": 768
             },
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
             accept_downloads=True
         )
 
         page = await context.new_page()
 
-        # =====================================================
-        # STEALTH
-        # =====================================================
-
         await page.add_init_script("""
         Object.defineProperty(navigator, 'webdriver', {
             get: () => undefined
         });
-
-        window.chrome = {
-            runtime: {}
-        };
-
-        Object.defineProperty(navigator, 'plugins', {
-            get: () => [1,2,3,4,5]
-        });
-
-        Object.defineProperty(navigator, 'languages', {
-            get: () => ['en-US', 'en']
-        });
         """)
 
-        await update_status(
+        await safe_edit(
             msg,
-            "🌐 Opening Lucifer Donghua page..."
+            "🌐 Opening page..."
         )
 
         await page.goto(post_url, timeout=0)
 
-        await page.wait_for_timeout(7000)
+        await page.wait_for_timeout(8000)
 
         title = await page.title()
 
         title = clean_name(title)
 
-        # =====================================================
-        # FIND DOWNLOAD BUTTON
-        # =====================================================
-
-        await update_status(
+        await safe_edit(
             msg,
             "🔍 Finding download button..."
         )
@@ -194,7 +231,7 @@ async def extract_video(post_url, msg):
                 "Download button not found"
             )
 
-        await update_status(
+        await safe_edit(
             msg,
             "☁ Opening download page..."
         )
@@ -206,10 +243,6 @@ async def extract_video(post_url, msg):
         redirect_page = await page_info.value
 
         await redirect_page.wait_for_load_state()
-
-        # =====================================================
-        # LOOP
-        # =====================================================
 
         for _ in range(60):
 
@@ -227,15 +260,15 @@ async def extract_video(post_url, msg):
                         await b.inner_text()
                     ).strip().lower()
 
-                    # =============================================
+                    # =====================================
                     # GET VIDEO
-                    # =============================================
+                    # =====================================
 
                     if "get video" in txt:
 
-                        await update_status(
+                        await safe_edit(
                             msg,
-                            "⚡ Generating download link..."
+                            "⚡ Generating download..."
                         )
 
                         await b.click(force=True)
@@ -246,13 +279,13 @@ async def extract_video(post_url, msg):
 
                         break
 
-                    # =============================================
+                    # =====================================
                     # WAIT
-                    # =============================================
+                    # =====================================
 
                     elif "getting download link" in txt:
 
-                        await update_status(
+                        await safe_edit(
                             msg,
                             "⏳ Waiting for server..."
                         )
@@ -263,26 +296,62 @@ async def extract_video(post_url, msg):
 
                         break
 
-                    # =============================================
+                    # =====================================
                     # DOWNLOAD
-                    # =============================================
+                    # =====================================
 
                     elif txt == "download":
 
-                        await update_status(
+                        await safe_edit(
                             msg,
-                            "⬇ Starting download..."
+                            "⬇ Downloading video..."
                         )
 
+                        await b.click(force=True)
+
+                        await redirect_page.wait_for_timeout(
+                            8000
+                        )
+
+                        current_url = redirect_page.url
+
+                        print(
+                            "CURRENT URL:",
+                            current_url
+                        )
+
+                        save_path = (
+                            f"{DOWNLOAD_DIR}/"
+                            f"{title}_raw.mp4"
+                        )
+
+                        # =================================
+                        # DIRECT MP4 STREAM
+                        # =================================
+
+                        if ".mp4" in current_url:
+
+                            cmd = f'''
+wget -O "{save_path}" "{current_url}"
+'''
+
+                            run(cmd)
+
+                            await browser.close()
+
+                            return title, save_path
+
+                        # =================================
+                        # NORMAL DOWNLOAD
+                        # =================================
+
                         async with redirect_page.expect_download(
-                            timeout=120000
-                        ) as dl:
+                            timeout=30000
+                        ) as dl2:
 
                             await b.click(force=True)
 
-                        download = await dl.value
-
-                        save_path = f"{DOWNLOAD_DIR}/{title}_raw.mp4"
+                        download = await dl2.value
 
                         await download.save_as(save_path)
 
@@ -295,10 +364,12 @@ async def extract_video(post_url, msg):
 
         await browser.close()
 
-        raise Exception("Final video not found")
+        raise Exception(
+            "Final video not found"
+        )
 
 # =========================================================
-# FAST ENCODE
+# ENCODE
 # =========================================================
 
 async def encode_480p(
@@ -307,9 +378,9 @@ async def encode_480p(
     msg
 ):
 
-    await update_status(
+    await safe_edit(
         msg,
-        "⚡ Fast encoding started..."
+        "⚡ Encoding video..."
     )
 
     cmd = f'''
@@ -318,13 +389,13 @@ ffmpeg -y \
 -i "{input_file}" \
 -vf scale=-2:480 \
 -c:v libx264 \
--crf 32 \
--preset ultrafast \
+-crf 28 \
+-preset veryfast \
 -pix_fmt yuv420p \
--profile:v baseline \
--level 3.0 \
+-profile:v high \
+-level 4.0 \
 -c:a aac \
--b:a 64k \
+-b:a 96k \
 -ar 44100 \
 -ac 2 \
 -movflags +faststart \
@@ -333,9 +404,7 @@ ffmpeg -y \
 '''
 
     process = await asyncio.create_subprocess_shell(
-        cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE
+        cmd
     )
 
     while True:
@@ -343,12 +412,12 @@ ffmpeg -y \
         if process.returncode is not None:
             break
 
-        await update_status(
+        await safe_edit(
             msg,
-            "🎞 Encoding video to 480p..."
+            "🎞 Encoding 480p..."
         )
 
-        await asyncio.sleep(5)
+        await asyncio.sleep(15)
 
         if process.returncode is not None:
             break
@@ -375,28 +444,44 @@ ffmpeg -y \
 # UPLOAD PROGRESS
 # =========================================================
 
-async def progress(current, total, msg):
+async def progress(
+    current,
+    total,
+    msg
+):
 
     percent = current * 100 / total
 
     filled = math.floor(percent / 10)
 
-    bar = "█" * filled + "░" * (10 - filled)
+    bar = (
+        "█" * filled
+        +
+        "░" * (10 - filled)
+    )
 
-    speed = current / 1024 / 1024
+    uploaded = (
+        current / 1024 / 1024
+    )
+
+    totalmb = (
+        total / 1024 / 1024
+    )
 
     text = f"""
-📤 Uploading to Telegram...
+📤 Uploading Video
 
-[{bar}] {round(percent,2)}%
+[{bar}]
 
-📦 Uploaded: {round(speed,2)} MB
+⚡ {round(percent,2)}%
+
+📦 {round(uploaded,2)} / {round(totalmb,2)} MB
 """
 
-    try:
-        await msg.edit(text)
-    except:
-        pass
+    await safe_edit(
+        msg,
+        text
+    )
 
 # =========================================================
 # PROCESS
@@ -404,121 +489,190 @@ async def progress(current, total, msg):
 
 async def process_link(message, link):
 
-    user_id = message.from_user.id
+    global UPLOAD_CHANNEL
 
-    if user_id not in OWNER_ID:
+    msg = await message.reply(
+        "🔍 Starting..."
+    )
 
-        return await message.reply(
-            "❌ Not allowed"
-        )
+    title, raw_file = await extract_video(
+        link,
+        msg
+    )
 
-    try:
+    encoded_file = (
+        f"{DOWNLOAD_DIR}/{title}_480p.mp4"
+    )
 
-        msg = await message.reply(
-            "🔍 Starting process..."
-        )
+    thumb = (
+        f"{DOWNLOAD_DIR}/{title}.jpg"
+    )
 
-        # =====================================================
-        # DOWNLOAD
-        # =====================================================
+    await encode_480p(
+        raw_file,
+        encoded_file,
+        msg
+    )
 
-        title, raw_file = await extract_video(
-            link,
-            msg
-        )
+    await safe_edit(
+        msg,
+        "🖼 Creating thumbnail..."
+    )
 
-        encoded_file = (
-            f"{DOWNLOAD_DIR}/{title}_480p.mp4"
-        )
+    make_thumb(
+        encoded_file,
+        thumb
+    )
 
-        thumb = (
-            f"{DOWNLOAD_DIR}/{title}.jpg"
-        )
+    size = (
+        os.path.getsize(encoded_file)
+        / 1024 / 1024
+    )
 
-        # =====================================================
-        # ENCODE
-        # =====================================================
+    await safe_edit(
+        msg,
+        f"📦 Final Size: {round(size,2)} MB"
+    )
 
-        await encode_480p(
-            raw_file,
-            encoded_file,
-            msg
-        )
+    duration = int(
+        get_duration(encoded_file)
+    )
 
-        # =====================================================
-        # THUMB
-        # =====================================================
+    caption_text = f"{title}"
 
-        await update_status(
-            msg,
-            "🖼 Creating thumbnail..."
-        )
+    # =====================================================
+    # SEND USER
+    # =====================================================
 
-        make_thumb(
-            encoded_file,
-            thumb
-        )
+    await app.send_video(
 
-        # =====================================================
-        # FILE SIZE
-        # =====================================================
+        chat_id=message.chat.id,
 
-        size = (
-            os.path.getsize(encoded_file)
-            / 1024 / 1024
-        )
+        video=encoded_file,
 
-        await update_status(
-            msg,
-            f"📦 Final Size: {round(size,2)} MB"
-        )
+        caption=caption_text,
 
-        # =====================================================
-        # UPLOAD
-        # =====================================================
+        thumb=thumb,
 
-        await asyncio.sleep(2)
+        duration=duration,
 
-        duration = int(
-            get_duration(encoded_file)
-        )
+        width=854,
 
-        await app.send_video(
-            chat_id=message.chat.id,
-            video=encoded_file,
-            caption=f"{title}",
-            thumb=thumb,
-            duration=duration,
-            width=854,
-            height=480,
-            supports_streaming=True,
-            progress=progress,
-            progress_args=(msg,)
-        )
+        height=480,
 
-        await update_status(
-            msg,
-            "✅ Upload completed!"
-        )
+        supports_streaming=True,
 
-        # =====================================================
-        # CLEANUP
-        # =====================================================
+        progress=progress,
+
+        progress_args=(msg,)
+    )
+
+    # =====================================================
+    # SEND CHANNEL
+    # =====================================================
+
+    if UPLOAD_CHANNEL:
 
         try:
-            os.remove(raw_file)
-            os.remove(encoded_file)
-            os.remove(thumb)
-        except:
-            pass
 
-    except Exception as e:
+            await app.send_video(
 
-        print(e)
+                chat_id=UPLOAD_CHANNEL,
 
-        await message.reply(
-            f"❌ Error:\n{e}"
+                video=encoded_file,
+
+                caption=caption_text,
+
+                thumb=thumb,
+
+                duration=duration,
+
+                width=854,
+
+                height=480,
+
+                supports_streaming=True
+            )
+
+        except Exception as e:
+
+            print(e)
+
+    await safe_edit(
+        msg,
+        "✅ Upload completed!"
+    )
+
+    # =====================================================
+    # CLEANUP
+    # =====================================================
+
+    try:
+        os.remove(raw_file)
+        os.remove(encoded_file)
+        os.remove(thumb)
+    except:
+        pass
+
+# =========================================================
+# QUEUE
+# =========================================================
+
+async def process_queue():
+
+    global PROCESSING
+
+    if PROCESSING:
+        return
+
+    PROCESSING = True
+
+    while QUEUE:
+
+        data = QUEUE.popleft()
+
+        message = data["message"]
+
+        link = data["link"]
+
+        try:
+
+            await process_link(
+                message,
+                link
+            )
+
+        except Exception as e:
+
+            print(e)
+
+    PROCESSING = False
+
+async def add_to_queue(message, link):
+
+    if len(QUEUE) >= 10:
+
+        return await message.reply(
+            "❌ Queue Full (10 Max)"
         )
+
+    QUEUE.append({
+
+        "message": message,
+        "link": link
+
+    })
+
+    pos = len(QUEUE)
+
+    await message.reply(
+        f"✅ Added To Queue\n"
+        f"📦 Position: {pos}"
+    )
+
+    asyncio.create_task(
+        process_queue()
+    )
 
 # =========================================================
 # COMMANDS
@@ -532,15 +686,19 @@ async def start(_, message):
         "/help\n"
         "/mode manual\n"
         "/mode automatic\n"
-        "/chklink LINK"
+        "/chklink LINK\n"
+        "/setchannel CHANNEL_ID"
     )
 
 @app.on_message(filters.command("help"))
 async def help_cmd(_, message):
 
     await message.reply(
-        "manual:\nUse /chklink LINK\n\n"
-        "automatic:\nSend link directly"
+        "manual:\n"
+        "Use /chklink LINK\n\n"
+
+        "automatic:\n"
+        "Send link directly"
     )
 
 @app.on_message(filters.command("mode"))
@@ -576,6 +734,29 @@ async def mode(_, message):
             "/mode manual"
         )
 
+@app.on_message(filters.command("setchannel"))
+async def setchannel(_, message):
+
+    global UPLOAD_CHANNEL
+
+    try:
+
+        cid = int(
+            message.text.split(" ")[1]
+        )
+
+        UPLOAD_CHANNEL = cid
+
+        await message.reply(
+            f"✅ Upload Channel Set\n{cid}"
+        )
+
+    except:
+
+        await message.reply(
+            "/setchannel -100xxxxxxxx"
+        )
+
 @app.on_message(filters.command("chklink"))
 async def chk(_, message):
 
@@ -586,7 +767,7 @@ async def chk(_, message):
             1
         )[1]
 
-        await process_link(
+        await add_to_queue(
             message,
             link
         )
@@ -614,7 +795,7 @@ async def auto(_, message):
 
     if "luciferdonghua.in" in text:
 
-        await process_link(
+        await add_to_queue(
             message,
             text
         )
