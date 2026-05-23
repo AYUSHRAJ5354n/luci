@@ -1,11 +1,14 @@
 # main.py
 
+# =========================================================
 # LUCIFER DONGHUA AUTO DOWNLOADER BOT
+# =========================================================
 
 import os
 import re
 import asyncio
 import subprocess
+import requests
 
 from pyrogram import Client, filters
 from playwright.async_api import async_playwright
@@ -51,7 +54,12 @@ def run(cmd):
 
 def get_duration(file):
 
-    cmd = f'ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "{file}"'
+    cmd = f'''
+ffprobe -v error \
+-show_entries format=duration \
+-of default=noprint_wrappers=1:nokey=1 \
+"{file}"
+'''
 
     out = subprocess.check_output(cmd, shell=True).decode().strip()
 
@@ -66,19 +74,45 @@ async def extract_video(post_url):
     async with async_playwright() as p:
 
         browser = await p.chromium.launch(
-            headless=True,
+            headless=False,
             args=[
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",
-                "--disable-dev-shm-usage"
+                "--disable-dev-shm-usage",
+                "--disable-infobars",
+                "--start-maximized"
             ]
         )
 
         context = await browser.new_context(
+            viewport={"width": 1366, "height": 768},
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
             accept_downloads=True
         )
 
         page = await context.new_page()
+
+        # =====================================================
+        # STEALTH
+        # =====================================================
+
+        await page.add_init_script("""
+        Object.defineProperty(navigator, 'webdriver', {
+            get: () => undefined
+        });
+
+        window.chrome = {
+            runtime: {}
+        };
+
+        Object.defineProperty(navigator, 'plugins', {
+            get: () => [1,2,3,4,5]
+        });
+
+        Object.defineProperty(navigator, 'languages', {
+            get: () => ['en-US', 'en']
+        });
+        """)
 
         print("Opening post page...")
 
@@ -100,15 +134,13 @@ async def extract_video(post_url):
 
             try:
 
-                txt = await btn.inner_text()
+                txt = (await btn.inner_text()).strip().lower()
 
-                if "Download" in txt:
+                print("BUTTON:", txt)
 
-                    href = await btn.get_attribute("href")
+                if "download" in txt:
 
-                    if href:
-
-                        target_btn = btn
+                    target_btn = btn
 
             except:
                 pass
@@ -130,45 +162,54 @@ async def extract_video(post_url):
         print("Redirect page opened")
 
         # =====================================================
-        # HANDLE GET VIDEO + DOWNLOAD
+        # HANDLE REDIRECT PAGE
         # =====================================================
 
-        for _ in range(30):
+        for _ in range(60):
 
             try:
 
-                current = redirect_page.url
+                print("Current URL:", redirect_page.url)
 
-                print(f"Current URL: {current}")
-
-                await redirect_page.wait_for_timeout(3000)
-
-                # ==============================================
-                # CHECK MP4 DIRECTLY
-                # ==============================================
+                await redirect_page.wait_for_timeout(5000)
 
                 html = await redirect_page.content()
 
+                # =================================================
+                # DIRECT MP4 CHECK
+                # =================================================
+
                 mp4s = re.findall(
-                    r'https?://[^\s"\']+\.mp4[^\s"\']*',
+                    r'https?://[^\\s"\']+\\.mp4[^\\s"\']*',
                     html
                 )
 
                 if mp4s:
 
+                    final = mp4s[0]
+
                     print("FINAL MP4 FOUND")
+
+                    save_path = f"{DOWNLOAD_DIR}/{title}_raw.mp4"
+
+                    r = requests.get(final, stream=True)
+
+                    with open(save_path, "wb") as f:
+
+                        for chunk in r.iter_content(chunk_size=1024*1024):
+
+                            if chunk:
+                                f.write(chunk)
 
                     await browser.close()
 
-                    return title, mp4s[0]
+                    return title, save_path
 
-                # ==============================================
-                # FIND BUTTONS
-                # ==============================================
+                # =================================================
+                # BUTTONS
+                # =================================================
 
                 btns = await redirect_page.locator("button,a").all()
-
-                clicked = False
 
                 for b in btns:
 
@@ -178,66 +219,43 @@ async def extract_video(post_url):
 
                         print("BUTTON:", txt)
 
-                        # ======================================
+                        # =============================================
                         # GET VIDEO
-                        # ======================================
+                        # =============================================
 
                         if "get video" in txt:
 
                             print("CLICK GET VIDEO")
 
-                            old_url = redirect_page.url
-
                             await b.click(force=True)
 
-                            await redirect_page.wait_for_timeout(8000)
+                            await redirect_page.wait_for_timeout(12000)
 
-                            # ==================================
-                            # AD REDIRECT DETECT
-                            # ==================================
-
-                            if redirect_page.url != old_url:
-
-                                print("AD REDIRECT DETECTED")
-
-                                try:
-
-                                    await redirect_page.go_back()
-
-                                    await redirect_page.wait_for_timeout(5000)
-
-                                except:
-                                    pass
-
-                            clicked = True
                             break
 
-                        # ======================================
+                        # =============================================
                         # WAIT STATE
-                        # ======================================
+                        # =============================================
 
                         elif "getting download link" in txt:
 
-                            print("WAITING FOR DOWNLOAD")
+                            print("WAITING FOR SERVER")
 
-                            await redirect_page.wait_for_timeout(10000)
+                            await redirect_page.wait_for_timeout(15000)
 
-                            clicked = True
                             break
 
-                        # ======================================
-                        # FINAL DOWNLOAD
-                        # ======================================
+                        # =============================================
+                        # FINAL DOWNLOAD BUTTON
+                        # =============================================
 
                         elif txt == "download":
 
                             print("CLICK DOWNLOAD")
 
-                            old_url = redirect_page.url
-
                             try:
 
-                                async with redirect_page.expect_download(timeout=30000) as dl:
+                                async with redirect_page.expect_download(timeout=60000) as dl:
 
                                     await b.click(force=True)
 
@@ -255,34 +273,11 @@ async def extract_video(post_url):
 
                             except Exception as e:
 
-                                print(e)
-
-                                # AD REDIRECT
-                                if redirect_page.url != old_url:
-
-                                    print("DOWNLOAD REDIRECT DETECTED")
-
-                                    try:
-
-                                        await redirect_page.go_back()
-
-                                        await redirect_page.wait_for_timeout(5000)
-
-                                    except:
-                                        pass
-
-                            clicked = True
-                            break
+                                print("DOWNLOAD ERROR:", e)
 
                     except Exception as e:
+
                         print(e)
-
-                if clicked:
-                    continue
-
-                print("WAITING...")
-
-                await redirect_page.wait_for_timeout(5000)
 
             except Exception as e:
 
@@ -338,7 +333,11 @@ ffmpeg -y \
 def make_thumb(video, thumb):
 
     cmd = f'''
-ffmpeg -y -i "{video}" -ss 00:00:30 -vframes 1 "{thumb}"
+ffmpeg -y \
+-i "{video}" \
+-ss 00:00:30 \
+-vframes 1 \
+"{thumb}"
 '''
 
     run(cmd)
@@ -353,7 +352,7 @@ async def process_link(message, link):
 
     if user_id not in OWNER_ID:
 
-        return await message.reply("Not allowed")
+        return await message.reply("❌ Not allowed")
 
     try:
 
