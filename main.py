@@ -1,172 +1,285 @@
 # main.py
-# Telegram Lucifer Donghua Downloader Bot
-# Features:
-# - Auto/manual mode
-# - Bypass redirect pages
-# - Download final mp4
-# - Remove first 1m26s
-# - Encode 480p under 150MB
-# - Upload as Telegram media video with thumbnail
-# - Commands: /start /help /mode /chklink
+# FULL LUCIFER DONGHUA DOWNLOADER BOT
 
 import os
 import re
-import json
-import time
+import math
+import shutil
 import asyncio
-import requests
 import subprocess
-from bs4 import BeautifulSoup
+import requests
+
 from pyrogram import Client, filters
-from pyrogram.types import Message
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
 from playwright.async_api import async_playwright
 
-API_ID = 123456
-API_HASH = "YOUR_API_HASH"
-BOT_TOKEN = "YOUR_BOT_TOKEN"
+# =========================================================
+# CONFIG
+# =========================================================
 
-OWNER_ID = [123456789]
+API_ID = 
+API_HASH = ""
+BOT_TOKEN = ""
+
+OWNER_IDS = [1685470205]
 
 DOWNLOAD_DIR = "downloads"
+
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-app = Client(
-    "lucifer_bot",
+# =========================================================
+# BOT
+# =========================================================
+
+bot = Client(
+    "LuciferDownloaderBot",
     api_id=API_ID,
     api_hash=API_HASH,
     bot_token=BOT_TOKEN
 )
 
+# =========================================================
+# USER MODES
+# =========================================================
+
 USER_MODE = {}
 
-# ===========================================
-# UTIL
-# ===========================================
+# =========================================================
+# UTILS
+# =========================================================
 
-def clean_name(name):
-    return re.sub(r'[\\/:*?"<>|]', '', name)
+def clean_filename(name):
+
+    name = re.sub(r'[\\/:*?"<>|]', "", name)
+    return name.strip()
 
 def run(cmd):
-    subprocess.run(cmd, shell=True)
+
+    subprocess.run(
+        cmd,
+        shell=True
+    )
 
 def get_duration(file):
+
     cmd = f'ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "{file}"'
-    out = subprocess.check_output(cmd, shell=True).decode().strip()
+
+    out = subprocess.check_output(
+        cmd,
+        shell=True
+    ).decode().strip()
+
     return float(out)
 
-# ===========================================
-# SCRAPER
-# ===========================================
+def get_size_mb(path):
+
+    return os.path.getsize(path) / (1024 * 1024)
+
+# =========================================================
+# EXTRACT VIDEO
+# =========================================================
 
 async def extract_video(post_url):
 
     async with async_playwright() as p:
 
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
+        browser = await p.chromium.launch(
+            headless=True,
+            args=[
+                "--disable-blink-features=AutomationControlled"
+            ]
+        )
+
+        page = await browser.new_page(
+            viewport={
+                "width": 430,
+                "height": 932
+            },
+            user_agent="Mozilla/5.0 (Linux; Android 13; Mobile)"
+        )
 
         print("Opening post page...")
-        await page.goto(post_url, timeout=0)
 
-        await page.wait_for_timeout(7000)
+        await page.goto(
+            post_url,
+            timeout=0
+        )
 
-        html = await page.content()
+        await page.wait_for_timeout(10000)
 
-        soup = BeautifulSoup(html, "html.parser")
+        title = await page.title()
 
-        title = soup.title.text.strip()
-        title = clean_name(title)
+        title = title.replace(" - Lucifer Donghua", "")
 
-        print("Searching second red button...")
+        title = clean_filename(title)
+
+        print("Finding red cloud button...")
+
+        clicked = False
 
         buttons = await page.locator("a").all()
 
-        target = None
-
         for btn in buttons:
+
             try:
-                text = await btn.inner_text()
-                if "Download" in text:
-                    href = await btn.get_attribute("href")
-                    target = href
+
+                html = await btn.inner_html()
+
+                if (
+                    "download" in html.lower()
+                    or "fa-download" in html.lower()
+                    or "cloud" in html.lower()
+                ):
+
+                    try:
+
+                        await btn.click()
+
+                        clicked = True
+
+                        print("Clicked red cloud button")
+
+                        break
+
+                    except:
+                        pass
+
             except:
                 pass
 
-        if not target:
-            raise Exception("Download button not found")
+        if not clicked:
+            raise Exception("Red cloud button not found")
 
-        print("Opening redirect page...")
-        await page.goto(target, timeout=0)
+        await page.wait_for_timeout(10000)
 
-        await page.wait_for_timeout(8000)
+        print("Handling redirects...")
 
-        # click GET VIDEO
-        try:
-            await page.locator("text=Get Video").click()
-        except:
-            pass
+        for i in range(10):
 
-        await page.wait_for_timeout(5000)
+            try:
 
-        # click DOWNLOAD
-        try:
-            await page.locator("text=Download").click()
-        except:
-            pass
+                await page.wait_for_load_state("networkidle")
 
-        video_url = None
+            except:
+                pass
 
-        for _ in range(20):
+            await page.wait_for_timeout(3000)
 
-            content = await page.content()
+            # GET VIDEO
 
-            urls = re.findall(r'https?://[^\s"\']+\.mp4[^\s"\']*', content)
+            try:
+
+                btn = page.locator("text=Get Video")
+
+                if await btn.count() > 0:
+
+                    await btn.click()
+
+                    print("Clicked GET VIDEO")
+
+                    await page.wait_for_timeout(6000)
+
+            except:
+                pass
+
+            # DOWNLOAD
+
+            try:
+
+                btn2 = page.locator("text=Download")
+
+                if await btn2.count() > 0:
+
+                    await btn2.click()
+
+                    print("Clicked DOWNLOAD")
+
+                    await page.wait_for_timeout(6000)
+
+            except:
+                pass
+
+            html = await page.content()
+
+            urls = re.findall(
+                r'https?://[^\s"\']+\.mp4[^\s"\']*',
+                html
+            )
 
             if urls:
-                video_url = urls[0]
-                break
 
-            await page.wait_for_timeout(2000)
+                final_url = urls[0]
 
-        if not video_url:
-            raise Exception("Final video URL not found")
+                print("FOUND MP4")
 
-        await browser.close()
+                await browser.close()
 
-        return title, video_url
+                return title, final_url
 
-# ===========================================
-# DOWNLOAD
-# ===========================================
+        raise Exception("Final mp4 not found")
+
+# =========================================================
+# DOWNLOAD VIDEO
+# =========================================================
 
 def download_video(url, output):
 
-    r = requests.get(url, stream=True)
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
+
+    r = requests.get(
+        url,
+        headers=headers,
+        stream=True
+    )
+
+    total = int(r.headers.get("content-length", 0))
+
+    downloaded = 0
 
     with open(output, "wb") as f:
+
         for chunk in r.iter_content(chunk_size=1024 * 1024):
+
             if chunk:
+
                 f.write(chunk)
 
-# ===========================================
-# ENCODE
-# ===========================================
+                downloaded += len(chunk)
 
-def encode_480p(input_file, output_file):
+                if total > 0:
 
-    duration = get_duration(input_file) - 86
+                    percent = downloaded * 100 / total
+
+                    print(f"{percent:.2f}%")
+
+# =========================================================
+# ENCODE 480P UNDER 150MB
+# =========================================================
+
+def encode_video(input_file, output_file):
+
+    duration = get_duration(input_file)
+
+    duration = duration - 86
 
     target_size = 150 * 1024 * 1024
 
     audio_bitrate = 64000
 
-    video_bitrate = int((target_size * 8 / duration) - audio_bitrate)
+    video_bitrate = int(
+        ((target_size * 8) / duration) - audio_bitrate
+    )
 
     if video_bitrate < 250000:
         video_bitrate = 250000
 
     cmd = f'''
-ffmpeg -y -ss 00:01:26 -i "{input_file}" \
+ffmpeg -y \
+-ss 00:01:26 \
+-i "{input_file}" \
 -vf scale=-2:480 \
 -c:v libx264 \
 -b:v {video_bitrate} \
@@ -179,125 +292,214 @@ ffmpeg -y -ss 00:01:26 -i "{input_file}" \
 
     run(cmd)
 
-# ===========================================
+# =========================================================
 # THUMBNAIL
-# ===========================================
+# =========================================================
 
-def make_thumb(video, thumb):
+def create_thumbnail(video, thumb):
 
-    cmd = f'ffmpeg -y -i "{video}" -ss 00:00:30 -vframes 1 "{thumb}"'
+    cmd = f'''
+ffmpeg -y \
+-i "{video}" \
+-ss 00:00:20 \
+-vframes 1 \
+"{thumb}"
+'''
+
     run(cmd)
 
-# ===========================================
+# =========================================================
 # PROCESS
-# ===========================================
+# =========================================================
 
-async def process_link(message: Message, link):
+async def process_link(message, link):
 
     user_id = message.from_user.id
 
-    if user_id not in OWNER_ID:
-        return
+    if user_id not in OWNER_IDS:
+
+        return await message.reply(
+            "Unauthorized"
+        )
+
+    status = await message.reply(
+        "🔍 Extracting video..."
+    )
 
     try:
-
-        msg = await message.reply("🔍 Extracting video...")
 
         title, video_url = await extract_video(link)
 
-        raw_file = f"{DOWNLOAD_DIR}/{title}.mp4"
-        enc_file = f"{DOWNLOAD_DIR}/{title}_480p.mp4"
-        thumb = f"{DOWNLOAD_DIR}/{title}.jpg"
+        raw_path = f"{DOWNLOAD_DIR}/{title}.mp4"
 
-        await msg.edit("⬇ Downloading video...")
+        encoded_path = f"{DOWNLOAD_DIR}/{title}_480p.mp4"
 
-        download_video(video_url, raw_file)
+        thumb_path = f"{DOWNLOAD_DIR}/{title}.jpg"
 
-        await msg.edit("🎞 Encoding 480p under 150MB...")
+        await status.edit(
+            "⬇ Downloading..."
+        )
 
-        encode_480p(raw_file, enc_file)
+        download_video(video_url, raw_path)
 
-        await msg.edit("🖼 Creating thumbnail...")
+        await status.edit(
+            "🎞 Encoding 480p..."
+        )
 
-        make_thumb(enc_file, thumb)
+        encode_video(
+            raw_path,
+            encoded_path
+        )
 
-        await msg.edit("📤 Uploading...")
+        size = get_size_mb(encoded_path)
 
-        await app.send_video(
+        print(f"FINAL SIZE: {size:.2f} MB")
+
+        await status.edit(
+            "🖼 Creating thumbnail..."
+        )
+
+        create_thumbnail(
+            encoded_path,
+            thumb_path
+        )
+
+        await status.edit(
+            "📤 Uploading..."
+        )
+
+        await bot.send_video(
             chat_id=message.chat.id,
-            video=enc_file,
+            video=encoded_path,
             caption=title,
-            thumb=thumb,
+            thumb=thumb_path,
             supports_streaming=True
         )
 
-        await msg.delete()
+        await status.delete()
 
-        os.remove(raw_file)
-        os.remove(enc_file)
-        os.remove(thumb)
+        try:
+            os.remove(raw_path)
+        except:
+            pass
+
+        try:
+            os.remove(encoded_path)
+        except:
+            pass
+
+        try:
+            os.remove(thumb_path)
+        except:
+            pass
 
     except Exception as e:
-        await message.reply(f"❌ Error:\n{e}")
 
-# ===========================================
+        await status.edit(
+            f"❌ Error:\n{e}"
+        )
+
+# =========================================================
 # COMMANDS
-# ===========================================
+# =========================================================
 
-@app.on_message(filters.command("start"))
+@bot.on_message(filters.command("start"))
 async def start(_, message):
 
-    await message.reply(
-        "🔥 Lucifer Donghua Downloader Bot\n\n"
-        "/help\n"
-        "/mode automatic\n"
-        "/mode manual\n"
-        "/chklink LINK"
-    )
+    text = """
+🔥 Lucifer Donghua Downloader Bot
 
-@app.on_message(filters.command("help"))
+Commands:
+
+/help
+/mode manual
+/mode automatic
+/chklink LINK
+
+Modes:
+
+manual:
+Use /chklink link
+
+automatic:
+Send link directly
+"""
+
+    await message.reply(text)
+
+# =========================================================
+
+@bot.on_message(filters.command("help"))
 async def help_cmd(_, message):
 
     await message.reply(
-        "Modes:\n\n"
-        "automatic = send link directly\n"
-        "manual = use /chklink link"
+        "Use Lucifer Donghua post link only."
     )
 
-@app.on_message(filters.command("mode"))
-async def mode(_, message):
+# =========================================================
+
+@bot.on_message(filters.command("mode"))
+async def mode_cmd(_, message):
 
     try:
+
         mode = message.text.split(" ")[1].lower()
 
         if mode not in ["manual", "automatic"]:
-            return await message.reply("Use manual or automatic")
+
+            return await message.reply(
+                "Use manual or automatic"
+            )
 
         USER_MODE[message.from_user.id] = mode
 
-        await message.reply(f"✅ Mode set to {mode}")
+        await message.reply(
+            f"✅ Mode changed to {mode}"
+        )
 
     except:
-        await message.reply("/mode manual")
 
-@app.on_message(filters.command("chklink"))
-async def chk(_, message):
+        await message.reply(
+            "/mode manual"
+        )
+
+# =========================================================
+
+@bot.on_message(filters.command("chklink"))
+async def chklink(_, message):
 
     try:
 
         link = message.text.split(" ", 1)[1]
 
-        await process_link(message, link)
+        if "luciferdonghua.in" not in link:
+
+            return await message.reply(
+                "Invalid link"
+            )
+
+        await process_link(
+            message,
+            link
+        )
 
     except:
-        await message.reply("❌ Invalid link")
 
-@app.on_message(filters.text)
-async def auto(_, message):
+        await message.reply(
+            "Usage:\n/chklink LINK"
+        )
+
+# =========================================================
+
+@bot.on_message(filters.text)
+async def auto_mode(_, message):
 
     user_id = message.from_user.id
 
-    mode = USER_MODE.get(user_id, "manual")
+    mode = USER_MODE.get(
+        user_id,
+        "manual"
+    )
 
     if mode != "automatic":
         return
@@ -306,11 +508,15 @@ async def auto(_, message):
 
     if "luciferdonghua.in" in text:
 
-        await process_link(message, text)
+        await process_link(
+            message,
+            text
+        )
 
-# ===========================================
-# START
-# ===========================================
+# =========================================================
+# START BOT
+# =========================================================
 
 print("BOT STARTED")
-app.run()
+
+bot.run()
