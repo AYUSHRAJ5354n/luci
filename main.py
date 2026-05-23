@@ -18,11 +18,11 @@ from playwright.async_api import async_playwright
 # CONFIG
 # =========================================================
 
-API_ID = 
-API_HASH = ""
-BOT_TOKEN = ""
+API_ID = 123456
+API_HASH = "YOUR_API_HASH"
+BOT_TOKEN = "YOUR_BOT_TOKEN"
 
-OWNER_IDS = [1685470205]
+OWNER_ID = [123456789]
 
 DOWNLOAD_DIR = "downloads"
 
@@ -32,49 +32,37 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 # BOT
 # =========================================================
 
-bot = Client(
-    "LuciferDownloaderBot",
+app = Client(
+    "lucifer_bot",
     api_id=API_ID,
     api_hash=API_HASH,
     bot_token=BOT_TOKEN
 )
 
-# =========================================================
-# USER MODES
-# =========================================================
-
 USER_MODE = {}
 
 # =========================================================
-# UTILS
+# UTIL
 # =========================================================
 
-def clean_filename(name):
+def clean_name(name):
 
-    name = re.sub(r'[\\/:*?"<>|]', "", name)
-    return name.strip()
+    return re.sub(r'[\\/:*?"<>|]', '', name)
+
 
 def run(cmd):
 
-    subprocess.run(
-        cmd,
-        shell=True
-    )
+    subprocess.run(cmd, shell=True)
+
 
 def get_duration(file):
 
     cmd = f'ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "{file}"'
 
-    out = subprocess.check_output(
-        cmd,
-        shell=True
-    ).decode().strip()
+    out = subprocess.check_output(cmd, shell=True).decode().strip()
 
     return float(out)
 
-def get_size_mb(path):
-
-    return os.path.getsize(path) / (1024 * 1024)
 
 # =========================================================
 # EXTRACT VIDEO
@@ -87,137 +75,162 @@ async def extract_video(post_url):
         browser = await p.chromium.launch(
             headless=True,
             args=[
-                "--disable-blink-features=AutomationControlled"
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-dev-shm-usage"
             ]
         )
 
-        page = await browser.new_page(
-            viewport={
-                "width": 430,
-                "height": 932
-            },
-            user_agent="Mozilla/5.0 (Linux; Android 13; Mobile)"
-        )
+        context = await browser.new_context()
+
+        page = await context.new_page()
 
         print("Opening post page...")
 
-        await page.goto(
-            post_url,
-            timeout=0
-        )
+        await page.goto(post_url, timeout=0)
 
-        await page.wait_for_timeout(10000)
+        await page.wait_for_timeout(8000)
 
         title = await page.title()
 
-        title = title.replace(" - Lucifer Donghua", "")
-
-        title = clean_filename(title)
+        title = clean_name(title)
 
         print("Finding red cloud button...")
 
-        clicked = False
-
         buttons = await page.locator("a").all()
+
+        target_btn = None
 
         for btn in buttons:
 
             try:
 
-                html = await btn.inner_html()
+                txt = await btn.inner_text()
 
-                if (
-                    "download" in html.lower()
-                    or "fa-download" in html.lower()
-                    or "cloud" in html.lower()
-                ):
+                if "Download" in txt:
+
+                    href = await btn.get_attribute("href")
+
+                    if href:
+
+                        target_btn = btn
+
+            except:
+                pass
+
+        if not target_btn:
+
+            raise Exception("Download button not found")
+
+        print("Clicking red cloud button...")
+
+        async with context.expect_page() as page_info:
+
+            await target_btn.click(force=True)
+
+        redirect_page = await page_info.value
+
+        await redirect_page.wait_for_load_state()
+
+        print("Redirect page opened")
+
+        # =====================================================
+        # HANDLE REDIRECTS
+        # =====================================================
+
+        for _ in range(20):
+
+            try:
+
+                current = redirect_page.url
+
+                print(f"Current URL: {current}")
+
+                html = await redirect_page.content()
+
+                # =================================================
+                # FIND MP4
+                # =================================================
+
+                mp4s = re.findall(
+                    r'https?://[^\s"\']+\.mp4[^\s"\']*',
+                    html
+                )
+
+                if mp4s:
+
+                    print("FINAL MP4 FOUND")
+
+                    await browser.close()
+
+                    return title, mp4s[0]
+
+                # =================================================
+                # FIND BUTTONS
+                # =================================================
+
+                btns = await redirect_page.locator("button,a").all()
+
+                clicked = False
+
+                for b in btns:
 
                     try:
 
-                        await btn.click()
+                        txt = (await b.inner_text()).lower()
 
-                        clicked = True
+                        # GET VIDEO
+                        if "get video" in txt:
 
-                        print("Clicked red cloud button")
+                            print("CLICK GET VIDEO")
 
-                        break
+                            await b.click(force=True)
+
+                            await redirect_page.wait_for_timeout(6000)
+
+                            clicked = True
+                            break
+
+                        # DOWNLOAD
+                        elif "download" in txt:
+
+                            print("CLICK DOWNLOAD")
+
+                            await b.click(force=True)
+
+                            await redirect_page.wait_for_timeout(6000)
+
+                            clicked = True
+                            break
 
                     except:
                         pass
 
-            except:
-                pass
+                if clicked:
+                    continue
 
-        if not clicked:
-            raise Exception("Red cloud button not found")
+                # =================================================
+                # REDIRECT FIX
+                # =================================================
 
-        await page.wait_for_timeout(10000)
+                print("GOING BACK")
 
-        print("Handling redirects...")
+                try:
 
-        for i in range(10):
+                    await redirect_page.go_back(timeout=10000)
 
-            try:
+                except:
+                    pass
 
-                await page.wait_for_load_state("networkidle")
+                await redirect_page.wait_for_timeout(4000)
 
-            except:
-                pass
+            except Exception as e:
 
-            await page.wait_for_timeout(3000)
+                print(e)
 
-            # GET VIDEO
+        await browser.close()
 
-            try:
-
-                btn = page.locator("text=Get Video")
-
-                if await btn.count() > 0:
-
-                    await btn.click()
-
-                    print("Clicked GET VIDEO")
-
-                    await page.wait_for_timeout(6000)
-
-            except:
-                pass
-
-            # DOWNLOAD
-
-            try:
-
-                btn2 = page.locator("text=Download")
-
-                if await btn2.count() > 0:
-
-                    await btn2.click()
-
-                    print("Clicked DOWNLOAD")
-
-                    await page.wait_for_timeout(6000)
-
-            except:
-                pass
-
-            html = await page.content()
-
-            urls = re.findall(
-                r'https?://[^\s"\']+\.mp4[^\s"\']*',
-                html
-            )
-
-            if urls:
-
-                final_url = urls[0]
-
-                print("FOUND MP4")
-
-                await browser.close()
-
-                return title, final_url
-
-        raise Exception("Final mp4 not found")
+        raise Exception("Final video URL not found")
 
 # =========================================================
 # DOWNLOAD VIDEO
@@ -225,19 +238,11 @@ async def extract_video(post_url):
 
 def download_video(url, output):
 
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
+    print("Downloading final mp4...")
 
-    r = requests.get(
-        url,
-        headers=headers,
-        stream=True
-    )
+    r = requests.get(url, stream=True)
 
-    total = int(r.headers.get("content-length", 0))
-
-    downloaded = 0
+    total = 0
 
     with open(output, "wb") as f:
 
@@ -245,21 +250,19 @@ def download_video(url, output):
 
             if chunk:
 
+                total += len(chunk)
+
                 f.write(chunk)
 
-                downloaded += len(chunk)
+                mb = total / 1024 / 1024
 
-                if total > 0:
-
-                    percent = downloaded * 100 / total
-
-                    print(f"{percent:.2f}%")
+                print(f"Downloaded {mb:.2f} MB")
 
 # =========================================================
-# ENCODE 480P UNDER 150MB
+# ENCODE
 # =========================================================
 
-def encode_video(input_file, output_file):
+def encode_480p(input_file, output_file):
 
     duration = get_duration(input_file)
 
@@ -269,12 +272,12 @@ def encode_video(input_file, output_file):
 
     audio_bitrate = 64000
 
-    video_bitrate = int(
-        ((target_size * 8) / duration) - audio_bitrate
-    )
+    video_bitrate = int((target_size * 8 / duration) - audio_bitrate)
 
     if video_bitrate < 250000:
         video_bitrate = 250000
+
+    print("Encoding started...")
 
     cmd = f'''
 ffmpeg -y \
@@ -292,18 +295,16 @@ ffmpeg -y \
 
     run(cmd)
 
+    print("Encoding completed")
+
 # =========================================================
 # THUMBNAIL
 # =========================================================
 
-def create_thumbnail(video, thumb):
+def make_thumb(video, thumb):
 
     cmd = f'''
-ffmpeg -y \
--i "{video}" \
--ss 00:00:20 \
--vframes 1 \
-"{thumb}"
+ffmpeg -y -i "{video}" -ss 00:00:30 -vframes 1 "{thumb}"
 '''
 
     run(cmd)
@@ -316,97 +317,65 @@ async def process_link(message, link):
 
     user_id = message.from_user.id
 
-    if user_id not in OWNER_IDS:
+    if user_id not in OWNER_ID:
 
-        return await message.reply(
-            "Unauthorized"
-        )
-
-    status = await message.reply(
-        "🔍 Extracting video..."
-    )
+        return await message.reply("Not allowed")
 
     try:
 
+        msg = await message.reply("🔍 Extracting video...")
+
         title, video_url = await extract_video(link)
 
-        raw_path = f"{DOWNLOAD_DIR}/{title}.mp4"
+        raw_file = f"{DOWNLOAD_DIR}/{title}.mp4"
 
-        encoded_path = f"{DOWNLOAD_DIR}/{title}_480p.mp4"
+        encoded_file = f"{DOWNLOAD_DIR}/{title}_480p.mp4"
 
-        thumb_path = f"{DOWNLOAD_DIR}/{title}.jpg"
+        thumb = f"{DOWNLOAD_DIR}/{title}.jpg"
 
-        await status.edit(
-            "⬇ Downloading..."
-        )
+        await msg.edit("⬇ Downloading video...")
 
-        download_video(video_url, raw_path)
+        download_video(video_url, raw_file)
 
-        await status.edit(
-            "🎞 Encoding 480p..."
-        )
+        await msg.edit("🎞 Encoding video...")
 
-        encode_video(
-            raw_path,
-            encoded_path
-        )
+        encode_480p(raw_file, encoded_file)
 
-        size = get_size_mb(encoded_path)
+        await msg.edit("🖼 Creating thumbnail...")
 
-        print(f"FINAL SIZE: {size:.2f} MB")
+        make_thumb(encoded_file, thumb)
 
-        await status.edit(
-            "🖼 Creating thumbnail..."
-        )
+        await msg.edit("📤 Uploading to Telegram...")
 
-        create_thumbnail(
-            encoded_path,
-            thumb_path
-        )
-
-        await status.edit(
-            "📤 Uploading..."
-        )
-
-        await bot.send_video(
+        await app.send_video(
             chat_id=message.chat.id,
-            video=encoded_path,
+            video=encoded_file,
             caption=title,
-            thumb=thumb_path,
+            thumb=thumb,
             supports_streaming=True
         )
 
-        await status.delete()
+        await msg.delete()
 
-        try:
-            os.remove(raw_path)
-        except:
-            pass
-
-        try:
-            os.remove(encoded_path)
-        except:
-            pass
-
-        try:
-            os.remove(thumb_path)
-        except:
-            pass
+        # CLEANUP
+        os.remove(raw_file)
+        os.remove(encoded_file)
+        os.remove(thumb)
 
     except Exception as e:
 
-        await status.edit(
-            f"❌ Error:\n{e}"
-        )
+        print(e)
+
+        await message.reply(f"❌ Error:\n{e}")
 
 # =========================================================
-# COMMANDS
+# START
 # =========================================================
 
-@bot.on_message(filters.command("start"))
+@app.on_message(filters.command("start"))
 async def start(_, message):
 
-    text = """
+    txt = """
 🔥 Lucifer Donghua Downloader Bot
 
 Commands:
@@ -415,31 +384,33 @@ Commands:
 /mode manual
 /mode automatic
 /chklink LINK
-
-Modes:
-
-manual:
-Use /chklink link
-
-automatic:
-Send link directly
 """
 
-    await message.reply(text)
+    await message.reply(txt)
 
 # =========================================================
+# HELP
+# =========================================================
 
-@bot.on_message(filters.command("help"))
+@app.on_message(filters.command("help"))
 async def help_cmd(_, message):
 
-    await message.reply(
-        "Use Lucifer Donghua post link only."
-    )
+    txt = """
+manual:
+Use /chklink LINK
+
+automatic:
+Just send link directly
+"""
+
+    await message.reply(txt)
 
 # =========================================================
+# MODE
+# =========================================================
 
-@bot.on_message(filters.command("mode"))
-async def mode_cmd(_, message):
+@app.on_message(filters.command("mode"))
+async def mode(_, message):
 
     try:
 
@@ -447,59 +418,43 @@ async def mode_cmd(_, message):
 
         if mode not in ["manual", "automatic"]:
 
-            return await message.reply(
-                "Use manual or automatic"
-            )
+            return await message.reply("Use manual or automatic")
 
         USER_MODE[message.from_user.id] = mode
 
-        await message.reply(
-            f"✅ Mode changed to {mode}"
-        )
+        await message.reply(f"✅ Mode changed to {mode}")
 
     except:
 
-        await message.reply(
-            "/mode manual"
-        )
+        await message.reply("/mode manual")
 
 # =========================================================
+# MANUAL
+# =========================================================
 
-@bot.on_message(filters.command("chklink"))
-async def chklink(_, message):
+@app.on_message(filters.command("chklink"))
+async def chk(_, message):
 
     try:
 
         link = message.text.split(" ", 1)[1]
 
-        if "luciferdonghua.in" not in link:
-
-            return await message.reply(
-                "Invalid link"
-            )
-
-        await process_link(
-            message,
-            link
-        )
+        await process_link(message, link)
 
     except:
 
-        await message.reply(
-            "Usage:\n/chklink LINK"
-        )
+        await message.reply("❌ Invalid link")
 
 # =========================================================
+# AUTOMATIC
+# =========================================================
 
-@bot.on_message(filters.text)
-async def auto_mode(_, message):
+@app.on_message(filters.text)
+async def auto(_, message):
 
     user_id = message.from_user.id
 
-    mode = USER_MODE.get(
-        user_id,
-        "manual"
-    )
+    mode = USER_MODE.get(user_id, "manual")
 
     if mode != "automatic":
         return
@@ -508,15 +463,12 @@ async def auto_mode(_, message):
 
     if "luciferdonghua.in" in text:
 
-        await process_link(
-            message,
-            text
-        )
+        await process_link(message, text)
 
 # =========================================================
-# START BOT
+# RUN
 # =========================================================
 
 print("BOT STARTED")
 
-bot.run()
+app.run()
