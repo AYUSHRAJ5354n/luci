@@ -1,14 +1,15 @@
 # main.py
 
 # =========================================================
-# LUCIFER DONGHUA AUTO DOWNLOADER BOT
+# FAST LUCIFER DONGHUA DOWNLOADER BOT
 # =========================================================
 
 import os
 import re
+import math
+import time
 import asyncio
 import subprocess
-import requests
 
 from pyrogram import Client, filters
 from playwright.async_api import async_playwright
@@ -17,8 +18,8 @@ from playwright.async_api import async_playwright
 # CONFIG
 # =========================================================
 
-API_ID = 26826540
-API_HASH = ""
+API_ID = 
+API_HASH = "32d454f51fc7b3b3c7d51c4f80f628b5"
 BOT_TOKEN = ""
 
 OWNER_ID = [1685470205]
@@ -35,7 +36,8 @@ app = Client(
     "lucifer_bot",
     api_id=API_ID,
     api_hash=API_HASH,
-    bot_token=BOT_TOKEN
+    bot_token=BOT_TOKEN,
+    workers=50
 )
 
 USER_MODE = {}
@@ -46,7 +48,20 @@ USER_MODE = {}
 
 def clean_name(name):
 
-    return re.sub(r'[\\/:*?"<>|]', '', name)
+    remove_words = [
+        " - Lucifer Donghua.in - ChineseDonghua Anime Stream",
+        "Lucifer Donghua.in",
+        "ChineseDonghua Anime Stream"
+    ]
+
+    for w in remove_words:
+        name = name.replace(w, "")
+
+    name = re.sub(r'[\\/:*?"<>|]', '', name)
+
+    name = re.sub(r'\s+', ' ', name).strip()
+
+    return name
 
 def run(cmd):
 
@@ -61,20 +76,35 @@ ffprobe -v error \
 "{file}"
 '''
 
-    out = subprocess.check_output(cmd, shell=True).decode().strip()
+    out = subprocess.check_output(
+        cmd,
+        shell=True
+    ).decode().strip()
 
     return float(out)
+
+# =========================================================
+# TG STATUS
+# =========================================================
+
+async def update_status(msg, text):
+
+    try:
+        await msg.edit(text)
+    except:
+        pass
 
 # =========================================================
 # EXTRACT VIDEO
 # =========================================================
 
-async def extract_video(post_url):
+async def extract_video(post_url, msg):
 
     async with async_playwright() as p:
 
         browser = await p.chromium.launch(
-            headless=False,
+            headless=True,
+            channel="chrome",
             args=[
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",
@@ -85,7 +115,10 @@ async def extract_video(post_url):
         )
 
         context = await browser.new_context(
-            viewport={"width": 1366, "height": 768},
+            viewport={
+                "width": 1366,
+                "height": 768
+            },
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
             accept_downloads=True
         )
@@ -114,17 +147,27 @@ async def extract_video(post_url):
         });
         """)
 
-        print("Opening post page...")
+        await update_status(
+            msg,
+            "🌐 Opening Lucifer Donghua page..."
+        )
 
         await page.goto(post_url, timeout=0)
 
-        await page.wait_for_timeout(8000)
+        await page.wait_for_timeout(7000)
 
         title = await page.title()
 
         title = clean_name(title)
 
-        print("Finding red cloud button...")
+        # =====================================================
+        # FIND DOWNLOAD BUTTON
+        # =====================================================
+
+        await update_status(
+            msg,
+            "🔍 Finding download button..."
+        )
 
         buttons = await page.locator("a").all()
 
@@ -134,9 +177,9 @@ async def extract_video(post_url):
 
             try:
 
-                txt = (await btn.inner_text()).strip().lower()
-
-                print("BUTTON:", txt)
+                txt = (
+                    await btn.inner_text()
+                ).strip().lower()
 
                 if "download" in txt:
 
@@ -147,9 +190,14 @@ async def extract_video(post_url):
 
         if not target_btn:
 
-            raise Exception("Download button not found")
+            raise Exception(
+                "Download button not found"
+            )
 
-        print("Clicking red cloud button...")
+        await update_status(
+            msg,
+            "☁ Opening download page..."
+        )
 
         async with context.expect_page() as page_info:
 
@@ -159,154 +207,110 @@ async def extract_video(post_url):
 
         await redirect_page.wait_for_load_state()
 
-        print("Redirect page opened")
-
         # =====================================================
-        # HANDLE REDIRECT PAGE
+        # LOOP
         # =====================================================
 
         for _ in range(60):
 
-            try:
+            await redirect_page.wait_for_timeout(4000)
 
-                print("Current URL:", redirect_page.url)
+            btns = await redirect_page.locator(
+                "button,a"
+            ).all()
 
-                await redirect_page.wait_for_timeout(5000)
+            for b in btns:
 
-                html = await redirect_page.content()
+                try:
 
-                # =================================================
-                # DIRECT MP4 CHECK
-                # =================================================
+                    txt = (
+                        await b.inner_text()
+                    ).strip().lower()
 
-                mp4s = re.findall(
-                    r'https?://[^\\s"\']+\\.mp4[^\\s"\']*',
-                    html
-                )
+                    # =============================================
+                    # GET VIDEO
+                    # =============================================
 
-                if mp4s:
+                    if "get video" in txt:
 
-                    final = mp4s[0]
+                        await update_status(
+                            msg,
+                            "⚡ Generating download link..."
+                        )
 
-                    print("FINAL MP4 FOUND")
+                        await b.click(force=True)
 
-                    save_path = f"{DOWNLOAD_DIR}/{title}_raw.mp4"
+                        await redirect_page.wait_for_timeout(
+                            10000
+                        )
 
-                    r = requests.get(final, stream=True)
+                        break
 
-                    with open(save_path, "wb") as f:
+                    # =============================================
+                    # WAIT
+                    # =============================================
 
-                        for chunk in r.iter_content(chunk_size=1024*1024):
+                    elif "getting download link" in txt:
 
-                            if chunk:
-                                f.write(chunk)
+                        await update_status(
+                            msg,
+                            "⏳ Waiting for server..."
+                        )
 
-                    await browser.close()
+                        await redirect_page.wait_for_timeout(
+                            12000
+                        )
 
-                    return title, save_path
+                        break
 
-                # =================================================
-                # BUTTONS
-                # =================================================
+                    # =============================================
+                    # DOWNLOAD
+                    # =============================================
 
-                btns = await redirect_page.locator("button,a").all()
+                    elif txt == "download":
 
-                for b in btns:
+                        await update_status(
+                            msg,
+                            "⬇ Starting download..."
+                        )
 
-                    try:
-
-                        txt = (await b.inner_text()).strip().lower()
-
-                        print("BUTTON:", txt)
-
-                        # =============================================
-                        # GET VIDEO
-                        # =============================================
-
-                        if "get video" in txt:
-
-                            print("CLICK GET VIDEO")
+                        async with redirect_page.expect_download(
+                            timeout=120000
+                        ) as dl:
 
                             await b.click(force=True)
 
-                            await redirect_page.wait_for_timeout(12000)
+                        download = await dl.value
 
-                            break
+                        save_path = f"{DOWNLOAD_DIR}/{title}_raw.mp4"
 
-                        # =============================================
-                        # WAIT STATE
-                        # =============================================
+                        await download.save_as(save_path)
 
-                        elif "getting download link" in txt:
+                        await browser.close()
 
-                            print("WAITING FOR SERVER")
+                        return title, save_path
 
-                            await redirect_page.wait_for_timeout(15000)
-
-                            break
-
-                        # =============================================
-                        # FINAL DOWNLOAD BUTTON
-                        # =============================================
-
-                        elif txt == "download":
-
-                            print("CLICK DOWNLOAD")
-
-                            try:
-
-                                async with redirect_page.expect_download(timeout=60000) as dl:
-
-                                    await b.click(force=True)
-
-                                download = await dl.value
-
-                                save_path = f"{DOWNLOAD_DIR}/{title}_raw.mp4"
-
-                                await download.save_as(save_path)
-
-                                print("DOWNLOAD COMPLETED")
-
-                                await browser.close()
-
-                                return title, save_path
-
-                            except Exception as e:
-
-                                print("DOWNLOAD ERROR:", e)
-
-                    except Exception as e:
-
-                        print(e)
-
-            except Exception as e:
-
-                print(e)
+                except:
+                    pass
 
         await browser.close()
 
         raise Exception("Final video not found")
 
 # =========================================================
-# ENCODE
+# FAST ENCODE
 # =========================================================
 
-def encode_480p(input_file, output_file):
+async def encode_480p(
+    input_file,
+    output_file,
+    msg
+):
 
-    duration = get_duration(input_file)
-
-    duration = duration - 86
-
-    target_size = 150 * 1024 * 1024
-
-    audio_bitrate = 64000
-
-    video_bitrate = int((target_size * 8 / duration) - audio_bitrate)
-
-    if video_bitrate < 250000:
-        video_bitrate = 250000
-
-    print("Encoding started...")
+    await update_status(
+        msg,
+        "⚡ Fast encoding started..."
+    )
 
     cmd = f'''
 ffmpeg -y \
@@ -314,17 +318,42 @@ ffmpeg -y \
 -i "{input_file}" \
 -vf scale=-2:480 \
 -c:v libx264 \
--b:v {video_bitrate} \
--preset veryfast \
+-crf 32 \
+-preset ultrafast \
+-pix_fmt yuv420p \
+-profile:v baseline \
+-level 3.0 \
 -c:a aac \
 -b:a 64k \
+-ar 44100 \
+-ac 2 \
 -movflags +faststart \
+-map_metadata -1 \
 "{output_file}"
 '''
 
-    run(cmd)
+    process = await asyncio.create_subprocess_shell(
+        cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
 
-    print("Encoding completed")
+    while True:
+
+        if process.returncode is not None:
+            break
+
+        await update_status(
+            msg,
+            "🎞 Encoding video to 480p..."
+        )
+
+        await asyncio.sleep(5)
+
+        if process.returncode is not None:
+            break
+
+    await process.communicate()
 
 # =========================================================
 # THUMBNAIL
@@ -343,6 +372,33 @@ ffmpeg -y \
     run(cmd)
 
 # =========================================================
+# UPLOAD PROGRESS
+# =========================================================
+
+async def progress(current, total, msg):
+
+    percent = current * 100 / total
+
+    filled = math.floor(percent / 10)
+
+    bar = "█" * filled + "░" * (10 - filled)
+
+    speed = current / 1024 / 1024
+
+    text = f"""
+📤 Uploading to Telegram...
+
+[{bar}] {round(percent,2)}%
+
+📦 Uploaded: {round(speed,2)} MB
+"""
+
+    try:
+        await msg.edit(text)
+    except:
+        pass
+
+# =========================================================
 # PROCESS
 # =========================================================
 
@@ -352,37 +408,102 @@ async def process_link(message, link):
 
     if user_id not in OWNER_ID:
 
-        return await message.reply("❌ Not allowed")
+        return await message.reply(
+            "❌ Not allowed"
+        )
 
     try:
 
-        msg = await message.reply("🔍 Extracting video...")
+        msg = await message.reply(
+            "🔍 Starting process..."
+        )
 
-        title, raw_file = await extract_video(link)
+        # =====================================================
+        # DOWNLOAD
+        # =====================================================
 
-        encoded_file = f"{DOWNLOAD_DIR}/{title}_480p.mp4"
+        title, raw_file = await extract_video(
+            link,
+            msg
+        )
 
-        thumb = f"{DOWNLOAD_DIR}/{title}.jpg"
+        encoded_file = (
+            f"{DOWNLOAD_DIR}/{title}_480p.mp4"
+        )
 
-        await msg.edit("🎞 Encoding 480p under 150MB...")
+        thumb = (
+            f"{DOWNLOAD_DIR}/{title}.jpg"
+        )
 
-        encode_480p(raw_file, encoded_file)
+        # =====================================================
+        # ENCODE
+        # =====================================================
 
-        await msg.edit("🖼 Creating thumbnail...")
+        await encode_480p(
+            raw_file,
+            encoded_file,
+            msg
+        )
 
-        make_thumb(encoded_file, thumb)
+        # =====================================================
+        # THUMB
+        # =====================================================
 
-        await msg.edit("📤 Uploading...")
+        await update_status(
+            msg,
+            "🖼 Creating thumbnail..."
+        )
+
+        make_thumb(
+            encoded_file,
+            thumb
+        )
+
+        # =====================================================
+        # FILE SIZE
+        # =====================================================
+
+        size = (
+            os.path.getsize(encoded_file)
+            / 1024 / 1024
+        )
+
+        await update_status(
+            msg,
+            f"📦 Final Size: {round(size,2)} MB"
+        )
+
+        # =====================================================
+        # UPLOAD
+        # =====================================================
+
+        await asyncio.sleep(2)
+
+        duration = int(
+            get_duration(encoded_file)
+        )
 
         await app.send_video(
             chat_id=message.chat.id,
             video=encoded_file,
-            caption=title,
+            caption=f"{title}",
             thumb=thumb,
-            supports_streaming=True
+            duration=duration,
+            width=854,
+            height=480,
+            supports_streaming=True,
+            progress=progress,
+            progress_args=(msg,)
         )
 
-        await msg.delete()
+        await update_status(
+            msg,
+            "✅ Upload completed!"
+        )
+
+        # =====================================================
+        # CLEANUP
+        # =====================================================
 
         try:
             os.remove(raw_file)
@@ -395,7 +516,9 @@ async def process_link(message, link):
 
         print(e)
 
-        await message.reply(f"❌ Error:\n{e}")
+        await message.reply(
+            f"❌ Error:\n{e}"
+        )
 
 # =========================================================
 # COMMANDS
@@ -425,39 +548,64 @@ async def mode(_, message):
 
     try:
 
-        mode = message.text.split(" ")[1].lower()
+        mode = (
+            message.text.split(" ")[1]
+            .lower()
+        )
 
-        if mode not in ["manual", "automatic"]:
+        if mode not in [
+            "manual",
+            "automatic"
+        ]:
 
-            return await message.reply("Use manual or automatic")
+            return await message.reply(
+                "Use manual or automatic"
+            )
 
-        USER_MODE[message.from_user.id] = mode
+        USER_MODE[
+            message.from_user.id
+        ] = mode
 
-        await message.reply(f"✅ Mode set to {mode}")
+        await message.reply(
+            f"✅ Mode set to {mode}"
+        )
 
     except:
 
-        await message.reply("/mode manual")
+        await message.reply(
+            "/mode manual"
+        )
 
 @app.on_message(filters.command("chklink"))
 async def chk(_, message):
 
     try:
 
-        link = message.text.split(" ", 1)[1]
+        link = message.text.split(
+            " ",
+            1
+        )[1]
 
-        await process_link(message, link)
+        await process_link(
+            message,
+            link
+        )
 
     except:
 
-        await message.reply("❌ Invalid link")
+        await message.reply(
+            "❌ Invalid link"
+        )
 
 @app.on_message(filters.text)
 async def auto(_, message):
 
     user_id = message.from_user.id
 
-    mode = USER_MODE.get(user_id, "manual")
+    mode = USER_MODE.get(
+        user_id,
+        "manual"
+    )
 
     if mode != "automatic":
         return
@@ -466,7 +614,10 @@ async def auto(_, message):
 
     if "luciferdonghua.in" in text:
 
-        await process_link(message, text)
+        await process_link(
+            message,
+            text
+        )
 
 # =========================================================
 # RUN
