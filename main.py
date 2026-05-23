@@ -1,28 +1,24 @@
 # main.py
-# FULL LUCIFER DONGHUA DOWNLOADER BOT
+
+# LUCIFER DONGHUA AUTO DOWNLOADER BOT
 
 import os
 import re
-import math
-import shutil
 import asyncio
 import subprocess
-import requests
 
 from pyrogram import Client, filters
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-
 from playwright.async_api import async_playwright
 
 # =========================================================
 # CONFIG
 # =========================================================
 
-API_ID = 123456
-API_HASH = "YOUR_API_HASH"
-BOT_TOKEN = "YOUR_BOT_TOKEN"
+API_ID = 26826540
+API_HASH = ""
+BOT_TOKEN = ""
 
-OWNER_ID = [123456789]
+OWNER_ID = [1685470205]
 
 DOWNLOAD_DIR = "downloads"
 
@@ -49,11 +45,9 @@ def clean_name(name):
 
     return re.sub(r'[\\/:*?"<>|]', '', name)
 
-
 def run(cmd):
 
     subprocess.run(cmd, shell=True)
-
 
 def get_duration(file):
 
@@ -62,7 +56,6 @@ def get_duration(file):
     out = subprocess.check_output(cmd, shell=True).decode().strip()
 
     return float(out)
-
 
 # =========================================================
 # EXTRACT VIDEO
@@ -81,7 +74,9 @@ async def extract_video(post_url):
             ]
         )
 
-        context = await browser.new_context()
+        context = await browser.new_context(
+            accept_downloads=True
+        )
 
         page = await context.new_page()
 
@@ -135,10 +130,10 @@ async def extract_video(post_url):
         print("Redirect page opened")
 
         # =====================================================
-        # HANDLE REDIRECTS
+        # HANDLE GET VIDEO + DOWNLOAD
         # =====================================================
 
-        for _ in range(20):
+        for _ in range(30):
 
             try:
 
@@ -146,11 +141,13 @@ async def extract_video(post_url):
 
                 print(f"Current URL: {current}")
 
-                html = await redirect_page.content()
+                await redirect_page.wait_for_timeout(3000)
 
-                # =================================================
-                # FIND MP4
-                # =================================================
+                # ==============================================
+                # CHECK MP4 DIRECTLY
+                # ==============================================
+
+                html = await redirect_page.content()
 
                 mp4s = re.findall(
                     r'https?://[^\s"\']+\.mp4[^\s"\']*',
@@ -165,9 +162,9 @@ async def extract_video(post_url):
 
                     return title, mp4s[0]
 
-                # =================================================
+                # ==============================================
                 # FIND BUTTONS
-                # =================================================
+                # ==============================================
 
                 btns = await redirect_page.locator("button,a").all()
 
@@ -177,52 +174,115 @@ async def extract_video(post_url):
 
                     try:
 
-                        txt = (await b.inner_text()).lower()
+                        txt = (await b.inner_text()).strip().lower()
 
+                        print("BUTTON:", txt)
+
+                        # ======================================
                         # GET VIDEO
+                        # ======================================
+
                         if "get video" in txt:
 
                             print("CLICK GET VIDEO")
 
+                            old_url = redirect_page.url
+
                             await b.click(force=True)
 
-                            await redirect_page.wait_for_timeout(6000)
+                            await redirect_page.wait_for_timeout(8000)
+
+                            # ==================================
+                            # AD REDIRECT DETECT
+                            # ==================================
+
+                            if redirect_page.url != old_url:
+
+                                print("AD REDIRECT DETECTED")
+
+                                try:
+
+                                    await redirect_page.go_back()
+
+                                    await redirect_page.wait_for_timeout(5000)
+
+                                except:
+                                    pass
 
                             clicked = True
                             break
 
-                        # DOWNLOAD
-                        elif "download" in txt:
+                        # ======================================
+                        # WAIT STATE
+                        # ======================================
+
+                        elif "getting download link" in txt:
+
+                            print("WAITING FOR DOWNLOAD")
+
+                            await redirect_page.wait_for_timeout(10000)
+
+                            clicked = True
+                            break
+
+                        # ======================================
+                        # FINAL DOWNLOAD
+                        # ======================================
+
+                        elif txt == "download":
 
                             print("CLICK DOWNLOAD")
 
-                            await b.click(force=True)
+                            old_url = redirect_page.url
 
-                            await redirect_page.wait_for_timeout(6000)
+                            try:
+
+                                async with redirect_page.expect_download(timeout=30000) as dl:
+
+                                    await b.click(force=True)
+
+                                download = await dl.value
+
+                                save_path = f"{DOWNLOAD_DIR}/{title}_raw.mp4"
+
+                                await download.save_as(save_path)
+
+                                print("DOWNLOAD COMPLETED")
+
+                                await browser.close()
+
+                                return title, save_path
+
+                            except Exception as e:
+
+                                print(e)
+
+                                # AD REDIRECT
+                                if redirect_page.url != old_url:
+
+                                    print("DOWNLOAD REDIRECT DETECTED")
+
+                                    try:
+
+                                        await redirect_page.go_back()
+
+                                        await redirect_page.wait_for_timeout(5000)
+
+                                    except:
+                                        pass
 
                             clicked = True
                             break
 
-                    except:
-                        pass
+                    except Exception as e:
+                        print(e)
 
                 if clicked:
                     continue
 
-                # =================================================
-                # REDIRECT FIX
-                # =================================================
+                print("WAITING...")
 
-                print("GOING BACK")
-
-                try:
-
-                    await redirect_page.go_back(timeout=10000)
-
-                except:
-                    pass
-
-                await redirect_page.wait_for_timeout(4000)
+                await redirect_page.wait_for_timeout(5000)
 
             except Exception as e:
 
@@ -230,33 +290,7 @@ async def extract_video(post_url):
 
         await browser.close()
 
-        raise Exception("Final video URL not found")
-
-# =========================================================
-# DOWNLOAD VIDEO
-# =========================================================
-
-def download_video(url, output):
-
-    print("Downloading final mp4...")
-
-    r = requests.get(url, stream=True)
-
-    total = 0
-
-    with open(output, "wb") as f:
-
-        for chunk in r.iter_content(chunk_size=1024 * 1024):
-
-            if chunk:
-
-                total += len(chunk)
-
-                f.write(chunk)
-
-                mb = total / 1024 / 1024
-
-                print(f"Downloaded {mb:.2f} MB")
+        raise Exception("Final video not found")
 
 # =========================================================
 # ENCODE
@@ -325,19 +359,13 @@ async def process_link(message, link):
 
         msg = await message.reply("🔍 Extracting video...")
 
-        title, video_url = await extract_video(link)
-
-        raw_file = f"{DOWNLOAD_DIR}/{title}.mp4"
+        title, raw_file = await extract_video(link)
 
         encoded_file = f"{DOWNLOAD_DIR}/{title}_480p.mp4"
 
         thumb = f"{DOWNLOAD_DIR}/{title}.jpg"
 
-        await msg.edit("⬇ Downloading video...")
-
-        download_video(video_url, raw_file)
-
-        await msg.edit("🎞 Encoding video...")
+        await msg.edit("🎞 Encoding 480p under 150MB...")
 
         encode_480p(raw_file, encoded_file)
 
@@ -345,7 +373,7 @@ async def process_link(message, link):
 
         make_thumb(encoded_file, thumb)
 
-        await msg.edit("📤 Uploading to Telegram...")
+        await msg.edit("📤 Uploading...")
 
         await app.send_video(
             chat_id=message.chat.id,
@@ -357,10 +385,12 @@ async def process_link(message, link):
 
         await msg.delete()
 
-        # CLEANUP
-        os.remove(raw_file)
-        os.remove(encoded_file)
-        os.remove(thumb)
+        try:
+            os.remove(raw_file)
+            os.remove(encoded_file)
+            os.remove(thumb)
+        except:
+            pass
 
     except Exception as e:
 
@@ -369,45 +399,27 @@ async def process_link(message, link):
         await message.reply(f"❌ Error:\n{e}")
 
 # =========================================================
-# START
+# COMMANDS
 # =========================================================
 
 @app.on_message(filters.command("start"))
 async def start(_, message):
 
-    txt = """
-🔥 Lucifer Donghua Downloader Bot
-
-Commands:
-
-/help
-/mode manual
-/mode automatic
-/chklink LINK
-"""
-
-    await message.reply(txt)
-
-# =========================================================
-# HELP
-# =========================================================
+    await message.reply(
+        "🔥 Lucifer Donghua Downloader Bot\n\n"
+        "/help\n"
+        "/mode manual\n"
+        "/mode automatic\n"
+        "/chklink LINK"
+    )
 
 @app.on_message(filters.command("help"))
 async def help_cmd(_, message):
 
-    txt = """
-manual:
-Use /chklink LINK
-
-automatic:
-Just send link directly
-"""
-
-    await message.reply(txt)
-
-# =========================================================
-# MODE
-# =========================================================
+    await message.reply(
+        "manual:\nUse /chklink LINK\n\n"
+        "automatic:\nSend link directly"
+    )
 
 @app.on_message(filters.command("mode"))
 async def mode(_, message):
@@ -422,15 +434,11 @@ async def mode(_, message):
 
         USER_MODE[message.from_user.id] = mode
 
-        await message.reply(f"✅ Mode changed to {mode}")
+        await message.reply(f"✅ Mode set to {mode}")
 
     except:
 
         await message.reply("/mode manual")
-
-# =========================================================
-# MANUAL
-# =========================================================
 
 @app.on_message(filters.command("chklink"))
 async def chk(_, message):
@@ -444,10 +452,6 @@ async def chk(_, message):
     except:
 
         await message.reply("❌ Invalid link")
-
-# =========================================================
-# AUTOMATIC
-# =========================================================
 
 @app.on_message(filters.text)
 async def auto(_, message):
