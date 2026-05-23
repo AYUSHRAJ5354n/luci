@@ -23,11 +23,11 @@ from playwright.async_api import async_playwright
 # CONFIG
 # =========================================================
 
-API_ID = 123456
-API_HASH = "YOUR_API_HASH"
+API_ID = 
+API_HASH = "32d454f51fc7b3b3c7d51c4f80f628b5"
 BOT_TOKEN = "YOUR_BOT_TOKEN"
 
-OWNER_ID = [123456789]
+OWNER_ID = [1685470205]
 
 DOWNLOAD_DIR = "downloads"
 
