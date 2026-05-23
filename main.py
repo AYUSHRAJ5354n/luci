@@ -2,7 +2,7 @@
 
 # =========================================================
 # LUCIFER DONGHUA AUTO DOWNLOADER BOT
-# FINAL STABLE VERSION
+# FULL FINAL VERSION
 # =========================================================
 
 import os
@@ -23,11 +23,11 @@ from playwright.async_api import async_playwright
 # CONFIG
 # =========================================================
 
-API_ID = 
-API_HASH = "32d454f51fc7b3b3c7d51c4f80f628b5"
-BOT_TOKEN = ""
+API_ID = 123456
+API_HASH = "YOUR_API_HASH"
+BOT_TOKEN = "YOUR_BOT_TOKEN"
 
-OWNER_ID = [1685470205]
+OWNER_ID = [123456789]
 
 DOWNLOAD_DIR = "downloads"
 
@@ -160,12 +160,18 @@ async def extract_video(post_url, msg):
 
     async with async_playwright() as p:
 
+        # =================================================
+        # BROWSER
+        # =================================================
+
         browser = await p.chromium.launch(
-            headless=True,
+            headless=False,
             args=[
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",
-                "--disable-dev-shm-usage"
+                "--disable-dev-shm-usage",
+                "--disable-infobars",
+                "--start-maximized"
             ]
         )
 
@@ -174,23 +180,25 @@ async def extract_video(post_url, msg):
                 "width": 1366,
                 "height": 768
             },
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
             accept_downloads=True
         )
 
         page = await context.new_page()
 
-        await page.add_init_script("""
-        Object.defineProperty(navigator, 'webdriver', {
-            get: () => undefined
-        });
-        """)
+        # =================================================
+        # OPEN PAGE
+        # =================================================
 
         await safe_edit(
             msg,
             "🌐 Opening page..."
         )
 
-        await page.goto(post_url, timeout=0)
+        await page.goto(
+            post_url,
+            timeout=0
+        )
 
         await page.wait_for_timeout(8000)
 
@@ -198,9 +206,9 @@ async def extract_video(post_url, msg):
 
         title = clean_name(title)
 
-        # =====================================================
-        # FIND RED DOWNLOAD BUTTON
-        # =====================================================
+        # =================================================
+        # FIND DOWNLOAD BUTTON
+        # =================================================
 
         await safe_edit(
             msg,
@@ -219,6 +227,8 @@ async def extract_video(post_url, msg):
                     await btn.inner_text()
                 ).strip().lower()
 
+                print("BUTTON:", txt)
+
                 if "download" in txt:
 
                     target_btn = btn
@@ -228,9 +238,15 @@ async def extract_video(post_url, msg):
 
         if not target_btn:
 
+            await browser.close()
+
             raise Exception(
                 "Download button not found"
             )
+
+        # =================================================
+        # OPEN DOWNLOAD PAGE
+        # =================================================
 
         await safe_edit(
             msg,
@@ -245,15 +261,15 @@ async def extract_video(post_url, msg):
 
         await redirect_page.wait_for_load_state()
 
-        # =====================================================
+        # =================================================
         # LOOP
-        # =====================================================
+        # =================================================
 
         download_try = 0
 
-        for _ in range(60):
+        for _ in range(25):
 
-            await redirect_page.wait_for_timeout(4000)
+            await redirect_page.wait_for_timeout(5000)
 
             btns = await redirect_page.locator(
                 "button,a"
@@ -277,6 +293,12 @@ async def extract_video(post_url, msg):
 
                         download_try += 1
 
+                        if download_try > 5:
+
+                            raise Exception(
+                                "Server failed generating download"
+                            )
+
                         await safe_edit(
                             msg,
                             f"⚡ Generating download...\n"
@@ -285,14 +307,15 @@ async def extract_video(post_url, msg):
 
                         old_url = redirect_page.url
 
-                        # CLICK
+                        # CLICK BUTTON
                         await redirect_page.evaluate(
                             "(el) => el.click()",
                             b
                         )
 
+                        # IMPORTANT WAIT
                         await redirect_page.wait_for_timeout(
-                            8000
+                            12000
                         )
 
                         new_url = redirect_page.url
@@ -315,7 +338,7 @@ async def extract_video(post_url, msg):
                                 await redirect_page.go_back()
 
                                 await redirect_page.wait_for_timeout(
-                                    5000
+                                    8000
                                 )
 
                                 print(
@@ -327,72 +350,31 @@ async def extract_video(post_url, msg):
                                 print(e)
 
                         # =========================================
-                        # CHECK BUTTON CHANGED
+                        # WAIT FOR BUTTON CHANGE
                         # =========================================
 
-                        btns2 = await redirect_page.locator(
-                            "button,a"
-                        ).all()
-
-                        found_download = False
-
-                        for bb in btns2:
-
-                            try:
-
-                                t2 = (
-                                    await bb.inner_text()
-                                ).strip().lower()
-
-                                print(
-                                    "NEW BUTTON:",
-                                    t2
-                                )
-
-                                if (
-                                    "download" in t2
-                                    or
-                                    "download link generate" in t2
-                                ):
-
-                                    found_download = True
-                                    break
-
-                            except:
-                                pass
-
-                        # =========================================
-                        # FAILED MANY TIMES
-                        # =========================================
-
-                        if (
-                            not found_download
-                            and
-                            download_try >= 5
-                        ):
-
-                            raise Exception(
-                                "Server failed generating download"
-                            )
-
-                        break
+                        await redirect_page.wait_for_timeout(
+                            10000
+                        )
 
                     # =============================================
                     # WAIT STATE
                     # =============================================
 
-                    elif "getting download link" in txt:
+                    elif (
+                        "getting download link" in txt
+                        or
+                        "download link generate" in txt
+                    ):
 
                         await safe_edit(
                             msg,
-                            "⏳ Waiting for server..."
+                            "⏳ Generating final download..."
                         )
 
                         await redirect_page.wait_for_timeout(
-                            12000
+                            15000
                         )
-
-                        break
 
                     # =============================================
                     # DOWNLOAD
