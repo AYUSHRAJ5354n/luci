@@ -2,7 +2,7 @@
 
 # =========================================================
 # LUCIFER DONGHUA AUTO DOWNLOADER BOT
-# FULL FINAL WORKING VERSION
+# FAST STABLE FINAL VERSION
 # =========================================================
 
 import os
@@ -23,13 +23,15 @@ from playwright.async_api import async_playwright
 # CONFIG
 # =========================================================
 
-API_ID = 
-API_HASH = "32d454f51fc7b3b3c7d51c4f80f628b5"
-BOT_TOKEN = ""
+API_ID = 123456
+API_HASH = "YOUR_API_HASH"
+BOT_TOKEN = "YOUR_BOT_TOKEN"
 
-OWNER_ID = [1685470205]
+OWNER_ID = [123456789]
 
 DOWNLOAD_DIR = "downloads"
+
+FFMPEG_THREADS = os.cpu_count()
 
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
@@ -143,8 +145,6 @@ async def safe_edit(msg, text):
 
         await msg.edit(text)
 
-        await asyncio.sleep(30)
-
     except FloodWait as e:
 
         await asyncio.sleep(e.value)
@@ -153,20 +153,19 @@ async def safe_edit(msg, text):
         pass
 
 # =========================================================
-# DOWNLOAD VIDEO
+# EXTRACT VIDEO
 # =========================================================
 
 async def extract_video(post_url, msg):
 
     async with async_playwright() as p:
 
-        # =================================================
-        # BROWSER
-        # =================================================
-
         browser = await p.chromium.launch(
+
             headless=False,
+
             args=[
+
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
@@ -176,19 +175,22 @@ async def extract_video(post_url, msg):
         )
 
         context = await browser.new_context(
+
             viewport={
                 "width": 1366,
                 "height": 768
             },
+
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+
             accept_downloads=True
         )
 
         page = await context.new_page()
 
-        # =================================================
-        # OPEN PAGE
-        # =================================================
+        # =====================================================
+        # OPEN POST PAGE
+        # =====================================================
 
         await safe_edit(
             msg,
@@ -200,38 +202,37 @@ async def extract_video(post_url, msg):
             timeout=0
         )
 
-        await page.wait_for_timeout(8000)
+        await page.wait_for_timeout(6000)
 
-        title = await page.title()
+        title = clean_name(
+            await page.title()
+        )
 
-        title = clean_name(title)
-
-        # =================================================
-        # FIND DOWNLOAD BUTTON
-        # =================================================
+        # =====================================================
+        # FIND RED DOWNLOAD BUTTON
+        # =====================================================
 
         await safe_edit(
             msg,
             "🔍 Finding download button..."
         )
 
-        buttons = await page.locator("a").all()
-
         target_btn = None
 
-        for btn in buttons:
+        btns = await page.locator("a").all()
+
+        for b in btns:
 
             try:
 
                 txt = (
-                    await btn.inner_text()
+                    await b.inner_text()
                 ).strip().lower()
-
-                print("BUTTON:", txt)
 
                 if "download" in txt:
 
-                    target_btn = btn
+                    target_btn = b
+                    break
 
             except:
                 pass
@@ -244,36 +245,34 @@ async def extract_video(post_url, msg):
                 "Download button not found"
             )
 
-        # =================================================
+        # =====================================================
         # OPEN DOWNLOAD PAGE
-        # =================================================
+        # =====================================================
 
         await safe_edit(
             msg,
             "☁ Opening download page..."
         )
 
-        async with context.expect_page() as page_info:
+        async with context.expect_page() as pinfo:
 
             await target_btn.click(force=True)
 
-        redirect_page = await page_info.value
+        redirect_page = await pinfo.value
 
         await redirect_page.wait_for_load_state()
 
-        # =================================================
-        # LOOP
-        # =================================================
+        # =====================================================
+        # MAIN LOOP
+        # =====================================================
 
-        download_try = 0
-
-        for _ in range(25):
-
-            await redirect_page.wait_for_timeout(5000)
+        while True:
 
             btns = await redirect_page.locator(
                 "button,a"
             ).all()
+
+            found_download = False
 
             for b in btns:
 
@@ -283,41 +282,26 @@ async def extract_video(post_url, msg):
                         await b.inner_text()
                     ).strip().lower()
 
-                    print("BUTTON:", txt)
-
-                    # =====================================================
+                    # =================================================
                     # GET VIDEO
-                    # =====================================================
+                    # =================================================
 
                     if "get video" in txt:
 
-                        download_try += 1
-
-                        if download_try > 5:
-
-                            raise Exception(
-                                "Server failed generating download"
-                            )
-
                         await safe_edit(
                             msg,
-                            f"⚡ Generating download...\n"
-                            f"🔄 Attempt: {download_try}/5"
+                            "⚡ Generating download..."
                         )
-
-                        old_url = redirect_page.url
-
-                        # =================================================
-                        # CLICK BUTTON
-                        # =================================================
 
                         await b.click(force=True)
 
-                        await redirect_page.wait_for_timeout(3000)
+                        await redirect_page.wait_for_timeout(
+                            3000
+                        )
 
-                        # =================================================
+                        # =============================================
                         # CLOSE AD TAB
-                        # =================================================
+                        # =============================================
 
                         pages = context.pages
 
@@ -331,173 +315,124 @@ async def extract_video(post_url, msg):
 
                                     await ad_page.close()
 
-                                    print("AD TAB CLOSED")
-
                             except:
                                 pass
 
-                        # =================================================
-                        # WAIT
-                        # =================================================
-
                         await redirect_page.wait_for_timeout(
-                            12000
+                            5000
                         )
 
-                        new_url = redirect_page.url
+                        break
 
-                        print("OLD:", old_url)
-                        print("NEW:", new_url)
-
-                        # =================================================
-                        # AD REDIRECT SAME PAGE
-                        # =================================================
-
-                        if new_url != old_url:
-
-                            print(
-                                "AD REDIRECT DETECTED"
-                            )
-
-                            try:
-
-                                await redirect_page.go_back()
-
-                                await redirect_page.wait_for_timeout(
-                                    8000
-                                )
-
-                                print(
-                                    "RETURNED BACK"
-                                )
-
-                            except Exception as e:
-
-                                print(e)
-
-                        # =================================================
-                        # WAIT FOR BUTTON CHANGE
-                        # =================================================
-
-                        await redirect_page.wait_for_timeout(
-                            10000
-                        )
-
-                    # =====================================================
-                    # WAIT STATE
-                    # =====================================================
-
-                    elif (
-                        "getting download link" in txt
-                        or
-                        "download link generate" in txt
-                    ):
-
-                        await safe_edit(
-                            msg,
-                            "⏳ Generating final download..."
-                        )
-
-                        await redirect_page.wait_for_timeout(
-                            15000
-                        )
-
-                    # =====================================================
-                    # DOWNLOAD
-                    # =====================================================
+                    # =================================================
+                    # DOWNLOAD BUTTON
+                    # =================================================
 
                     elif txt == "download":
+
+                        found_download = True
 
                         await safe_edit(
                             msg,
                             "⬇ Starting download..."
                         )
 
-                        old_url = redirect_page.url
+                        before = set(
+                            os.listdir(DOWNLOAD_DIR)
+                        )
 
-                        try:
+                        await b.click(force=True)
 
-                            async with redirect_page.expect_download(
-                                timeout=30000
-                            ) as dl:
+                        # =============================================
+                        # WAIT DOWNLOAD START
+                        # =============================================
 
-                                await b.click(force=True)
+                        while True:
 
-                            await redirect_page.wait_for_timeout(3000)
-
-                            # =================================================
-                            # CLOSE AD TAB
-                            # =================================================
-
-                            pages = context.pages
-
-                            if len(pages) > 2:
-
-                                try:
-
-                                    ad_page = pages[-1]
-
-                                    if ad_page != redirect_page:
-
-                                        await ad_page.close()
-
-                                        print("DOWNLOAD AD CLOSED")
-
-                                except:
-                                    pass
-
-                            download = await dl.value
-
-                            save_path = (
-                                f"{DOWNLOAD_DIR}/"
-                                f"{title}_raw.mp4"
+                            now = set(
+                                os.listdir(DOWNLOAD_DIR)
                             )
 
-                            await download.save_as(
-                                save_path
-                            )
+                            new = now - before
 
-                            print(
-                                "DOWNLOAD FINISHED"
-                            )
+                            mp4s = [
 
-                            await browser.close()
+                                x for x in new
 
-                            return title, save_path
-
-                        except Exception as e:
-
-                            print(
-                                "DOWNLOAD ERROR:",
-                                e
-                            )
-
-                            new_url = redirect_page.url
-
-                            # =================================================
-                            # DOWNLOAD REDIRECT
-                            # =================================================
-
-                            if new_url != old_url:
-
-                                print(
-                                    "DOWNLOAD REDIRECT"
+                                if (
+                                    x.endswith(".mp4")
+                                    or
+                                    x.endswith(".crdownload")
                                 )
+                            ]
 
-                                try:
+                            if mp4s:
+                                break
 
-                                    await redirect_page.go_back()
+                            await asyncio.sleep(1)
 
-                                    await redirect_page.wait_for_timeout(
-                                        5000
-                                    )
+                        # =============================================
+                        # WAIT DOWNLOAD COMPLETE
+                        # =============================================
 
-                                except:
-                                    pass
+                        while True:
 
-                except Exception as e:
+                            files = os.listdir(
+                                DOWNLOAD_DIR
+                            )
 
-                    print(e)
+                            downloading = [
+
+                                x for x in files
+
+                                if x.endswith(
+                                    ".crdownload"
+                                )
+                            ]
+
+                            if not downloading:
+                                break
+
+                            await asyncio.sleep(2)
+
+                        files = os.listdir(
+                            DOWNLOAD_DIR
+                        )
+
+                        mp4_files = [
+
+                            x for x in files
+                            if x.endswith(".mp4")
+                        ]
+
+                        latest = max(
+                            mp4_files,
+                            key=lambda x: os.path.getctime(
+                                os.path.join(
+                                    DOWNLOAD_DIR,
+                                    x
+                                )
+                            )
+                        )
+
+                        save_path = os.path.join(
+                            DOWNLOAD_DIR,
+                            latest
+                        )
+
+                        await browser.close()
+
+                        return title, save_path
+
+                except:
+                    pass
+
+            if found_download:
+                break
+
+            await redirect_page.wait_for_timeout(
+                2000
+            )
 
         await browser.close()
 
@@ -522,19 +457,16 @@ async def encode_480p(
 
     cmd = f'''
 ffmpeg -y \
+-threads {FFMPEG_THREADS} \
 -ss 00:01:26 \
 -i "{input_file}" \
 -vf scale=-2:480 \
 -c:v libx264 \
--crf 28 \
--preset veryfast \
+-crf 29 \
+-preset ultrafast \
 -pix_fmt yuv420p \
--profile:v high \
--level 4.0 \
 -c:a aac \
 -b:a 96k \
--ar 44100 \
--ac 2 \
 -movflags +faststart \
 -map_metadata -1 \
 "{output_file}"
@@ -554,7 +486,7 @@ ffmpeg -y \
             "🎞 Encoding 480p..."
         )
 
-        await asyncio.sleep(30)
+        await asyncio.sleep(15)
 
         if process.returncode is not None:
             break
@@ -562,7 +494,7 @@ ffmpeg -y \
     await process.communicate()
 
 # =========================================================
-# THUMBNAIL
+# THUMB
 # =========================================================
 
 def make_thumb(video, thumb):
@@ -597,15 +529,12 @@ async def progress(
         "░" * (10 - filled)
     )
 
-    uploaded = (
-        current / 1024 / 1024
-    )
+    uploaded = current / 1024 / 1024
 
-    totalmb = (
-        total / 1024 / 1024
-    )
+    totalmb = total / 1024 / 1024
 
     text = f"""
+
 📤 Uploading Video
 
 [{bar}]
@@ -645,11 +574,19 @@ async def process_link(message, link):
         f"{DOWNLOAD_DIR}/{title}.jpg"
     )
 
+    # =====================================================
+    # ENCODE
+    # =====================================================
+
     await encode_480p(
         raw_file,
         encoded_file,
         msg
     )
+
+    # =====================================================
+    # THUMB
+    # =====================================================
 
     await safe_edit(
         msg,
@@ -659,6 +596,10 @@ async def process_link(message, link):
     make_thumb(
         encoded_file,
         thumb
+    )
+
+    duration = int(
+        get_duration(encoded_file)
     )
 
     size = (
@@ -671,11 +612,7 @@ async def process_link(message, link):
         f"📦 Final Size: {round(size,2)} MB"
     )
 
-    duration = int(
-        get_duration(encoded_file)
-    )
-
-    caption_text = f"{title}"
+    caption = title
 
     # =====================================================
     # SEND USER
@@ -687,7 +624,7 @@ async def process_link(message, link):
 
         video=encoded_file,
 
-        caption=caption_text,
+        caption=caption,
 
         thumb=thumb,
 
@@ -718,7 +655,7 @@ async def process_link(message, link):
 
                 video=encoded_file,
 
-                caption=caption_text,
+                caption=caption,
 
                 thumb=thumb,
 
@@ -745,9 +682,11 @@ async def process_link(message, link):
     # =====================================================
 
     try:
+
         os.remove(raw_file)
         os.remove(encoded_file)
         os.remove(thumb)
+
     except:
         pass
 
@@ -787,13 +726,11 @@ async def process_queue():
 
                 await message.reply(
                     f"❌ Failed:\n{e}\n\n"
-                    f"⏭ Skipping to next queue item..."
+                    f"⏭ Skipping next item..."
                 )
 
             except:
                 pass
-
-            continue
 
     PROCESSING = False
 
@@ -802,7 +739,7 @@ async def add_to_queue(message, link):
     if len(QUEUE) >= 10:
 
         return await message.reply(
-            "❌ Queue Full (10 Max)"
+            "❌ Queue Full"
         )
 
     QUEUE.append({
@@ -845,7 +782,6 @@ async def help_cmd(_, message):
     await message.reply(
         "manual:\n"
         "Use /chklink LINK\n\n"
-
         "automatic:\n"
         "Send link directly"
     )
@@ -859,15 +795,6 @@ async def mode(_, message):
             message.text.split(" ")[1]
             .lower()
         )
-
-        if mode not in [
-            "manual",
-            "automatic"
-        ]:
-
-            return await message.reply(
-                "Use manual or automatic"
-            )
 
         USER_MODE[
             message.from_user.id
@@ -897,7 +824,7 @@ async def setchannel(_, message):
         UPLOAD_CHANNEL = cid
 
         await message.reply(
-            f"✅ Upload Channel Set\n{cid}"
+            f"✅ Channel Set\n{cid}"
         )
 
     except:
