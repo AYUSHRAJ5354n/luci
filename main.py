@@ -2,7 +2,7 @@
 
 # =========================================================
 # LUCIFER DONGHUA AUTO DOWNLOADER BOT
-# FULL FINAL VERSION
+# FULL FINAL WORKING VERSION
 # =========================================================
 
 import os
@@ -23,11 +23,11 @@ from playwright.async_api import async_playwright
 # CONFIG
 # =========================================================
 
-API_ID = 
-API_HASH = "32d454f51fc7b3b3c7d51c4f80f628b5"
-BOT_TOKEN = ""
+API_ID = 123456
+API_HASH = "YOUR_API_HASH"
+BOT_TOKEN = "YOUR_BOT_TOKEN"
 
-OWNER_ID = [1685470205]
+OWNER_ID = [123456789]
 
 DOWNLOAD_DIR = "downloads"
 
@@ -285,9 +285,9 @@ async def extract_video(post_url, msg):
 
                     print("BUTTON:", txt)
 
-                    # =============================================
+                    # =====================================================
                     # GET VIDEO
-                    # =============================================
+                    # =====================================================
 
                     if "get video" in txt:
 
@@ -307,13 +307,39 @@ async def extract_video(post_url, msg):
 
                         old_url = redirect_page.url
 
+                        # =================================================
                         # CLICK BUTTON
-                        await redirect_page.evaluate(
-                            "(el) => el.click()",
-                            b
-                        )
+                        # =================================================
 
-                        # IMPORTANT WAIT
+                        await b.click(force=True)
+
+                        await redirect_page.wait_for_timeout(3000)
+
+                        # =================================================
+                        # CLOSE AD TAB
+                        # =================================================
+
+                        pages = context.pages
+
+                        if len(pages) > 2:
+
+                            try:
+
+                                ad_page = pages[-1]
+
+                                if ad_page != redirect_page:
+
+                                    await ad_page.close()
+
+                                    print("AD TAB CLOSED")
+
+                            except:
+                                pass
+
+                        # =================================================
+                        # WAIT
+                        # =================================================
+
                         await redirect_page.wait_for_timeout(
                             12000
                         )
@@ -323,9 +349,9 @@ async def extract_video(post_url, msg):
                         print("OLD:", old_url)
                         print("NEW:", new_url)
 
-                        # =========================================
-                        # AD REDIRECT
-                        # =========================================
+                        # =================================================
+                        # AD REDIRECT SAME PAGE
+                        # =================================================
 
                         if new_url != old_url:
 
@@ -349,17 +375,17 @@ async def extract_video(post_url, msg):
 
                                 print(e)
 
-                        # =========================================
+                        # =================================================
                         # WAIT FOR BUTTON CHANGE
-                        # =========================================
+                        # =================================================
 
                         await redirect_page.wait_for_timeout(
                             10000
                         )
 
-                    # =============================================
+                    # =====================================================
                     # WAIT STATE
-                    # =============================================
+                    # =====================================================
 
                     elif (
                         "getting download link" in txt
@@ -376,9 +402,9 @@ async def extract_video(post_url, msg):
                             15000
                         )
 
-                    # =============================================
+                    # =====================================================
                     # DOWNLOAD
-                    # =============================================
+                    # =====================================================
 
                     elif txt == "download":
 
@@ -395,10 +421,30 @@ async def extract_video(post_url, msg):
                                 timeout=30000
                             ) as dl:
 
-                                await redirect_page.evaluate(
-                                    "(el) => el.click()",
-                                    b
-                                )
+                                await b.click(force=True)
+
+                            await redirect_page.wait_for_timeout(3000)
+
+                            # =================================================
+                            # CLOSE AD TAB
+                            # =================================================
+
+                            pages = context.pages
+
+                            if len(pages) > 2:
+
+                                try:
+
+                                    ad_page = pages[-1]
+
+                                    if ad_page != redirect_page:
+
+                                        await ad_page.close()
+
+                                        print("DOWNLOAD AD CLOSED")
+
+                                except:
+                                    pass
 
                             download = await dl.value
 
@@ -428,9 +474,9 @@ async def extract_video(post_url, msg):
 
                             new_url = redirect_page.url
 
-                            # =====================================
+                            # =================================================
                             # DOWNLOAD REDIRECT
-                            # =====================================
+                            # =================================================
 
                             if new_url != old_url:
 
